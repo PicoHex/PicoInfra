@@ -27,7 +27,8 @@
 
   <ItemGroup>
     <None
-      Include="..\PicoMediator.Gen\$(OutputPath)\PicoMediator.Gen.dll"
+      Include="..\PicoMediator.Genin\$(Configuration)
+etstandard2.0\PicoMediator.Gen.dll"
       Pack="true"
       PackagePath="analyzers/dotnet/cs"
       Visible="false"
