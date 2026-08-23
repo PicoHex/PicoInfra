@@ -9,15 +9,12 @@
   <PropertyGroup Condition="'$(AotOptimizationLevel)' == 'aggressive'">
     <PublishAot Condition="'$(PublishAot)' == ''">true</PublishAot>
     <TrimMode Condition="'$(TrimMode)' == ''">full</TrimMode>
-    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
-    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
-    <PublishTrimmed>true</PublishTrimmed>
-    <IlcTrimMetadata>true</IlcTrimMetadata>
-    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
-    <IlcDisableReflection>true</IlcDisableReflection>
-    <IlcGenerateDebugInfo>false</IlcGenerateDebugInfo>
-    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
-    <IlcGenerateUnwindStackTraceData>false</IlcGenerateUnwindStackTraceData>
+    <!-- .NET 10 SDK (>= 10.0.400): classic Ilc* properties were removed
+         and are silently ignored; these are the verified replacements.
+         InvariantGlobalization is an app-level decision (see csproj-format
+         skill) and is intentionally NOT defaulted here. -->
+    <StackTraceSupport>false</StackTraceSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
   </PropertyGroup>
 
   <!--
