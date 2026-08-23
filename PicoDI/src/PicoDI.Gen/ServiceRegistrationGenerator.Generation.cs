@@ -79,7 +79,25 @@ internal static partial class ServiceRegistrationSourceEmitter
         var registrationLookup = registrations
             .GroupBy(r => r.ServiceTypeFullName)
             .ToDictionary(g => g.Key, g => g.Last());
-        GenerateTypedResolvers(sb, registrations, registrationLookup);
+
+        // Generated-code pruning: only emit Resolve methods for service types
+        // actually referenced by other factories' dependency chains — not one
+        // method per registration (the old behavior emitted ~90% unused methods
+        // into every consumer assembly).
+        var referencedResolvers = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var reg in registrations)
+        {
+            if (!reg.ConstructorParameters.IsEmpty)
+                GenerateInlinedFactory(
+                    reg,
+                    registrationLookup,
+                    [],
+                    0,
+                    "scope",
+                    referencedResolvers
+                );
+        }
+        GenerateTypedResolvers(sb, registrations, registrationLookup, referencedResolvers);
 
         sb.AppendLine("}");
         return sb.ToString();
@@ -239,7 +257,8 @@ internal static partial class ServiceRegistrationSourceEmitter
         Dictionary<string, ServiceRegistration> registrationLookup,
         HashSet<string> visitedTypes,
         int indentLevel,
-        string scopeVarName = "scope"
+        string scopeVarName = "scope",
+        HashSet<string>? referencedResolvers = null
     )
     {
         if (reg.ConstructorParameters.IsEmpty)
@@ -252,7 +271,8 @@ internal static partial class ServiceRegistrationSourceEmitter
                     registrationLookup,
                     visitedTypes,
                     indentLevel + 1,
-                    scopeVarName
+                    scopeVarName,
+                    referencedResolvers
                 )
             )
             .ToList();
@@ -281,7 +301,8 @@ internal static partial class ServiceRegistrationSourceEmitter
         Dictionary<string, ServiceRegistration> registrationLookup,
         HashSet<string> visitedTypes,
         int indentLevel,
-        string scopeVarName = "scope"
+        string scopeVarName = "scope",
+        HashSet<string>? referencedResolvers = null
     )
     {
         if (!registrationLookup.TryGetValue(paramTypeFullName, out var depReg))
@@ -289,10 +310,16 @@ internal static partial class ServiceRegistrationSourceEmitter
 
         var resolverName = GetResolverMethodName(paramTypeFullName);
         if (depReg.Lifetime != PicoDiNames.Transient)
+        {
+            referencedResolvers?.Add(resolverName);
             return $"Resolve.{resolverName}({scopeVarName})";
+        }
 
         if (visitedTypes.Contains(paramTypeFullName))
+        {
+            referencedResolvers?.Add(resolverName);
             return $"Resolve.{resolverName}({scopeVarName})";
+        }
 
         var newVisited = new HashSet<string>(visitedTypes) { paramTypeFullName };
         return GenerateInlinedFactory(
@@ -300,7 +327,8 @@ internal static partial class ServiceRegistrationSourceEmitter
             registrationLookup,
             newVisited,
             indentLevel,
-            scopeVarName
+            scopeVarName,
+            referencedResolvers
         );
     }
 }

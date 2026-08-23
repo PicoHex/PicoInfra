@@ -89,15 +89,14 @@ public sealed class PicoDISourceGeneratorTests
             .Any(f => f.Declaration.Variables.Any(v => v.Identifier.Text == "PrebuiltCache"));
         await Assert.That(hasPrebuiltCache).IsFalse();
 
+        // GoldenService has no factory dependencies — no Resolve methods are
+        // referenced, so the Resolve class is not emitted at all (generated-code
+        // pruning: only dependencies referenced by factory chains get resolvers).
         var resolveClass = generatedClass
             .DescendantNodes()
             .OfType<ClassDeclarationSyntax>()
-            .Single(c => c.Identifier.Text == "Resolve");
-        var resolveMethod = resolveClass
-            .DescendantNodes()
-            .OfType<MethodDeclarationSyntax>()
-            .Single(m => m.Identifier.Text == "IGoldenService");
-        await Assert.That(resolveMethod.ReturnType.ToString()).Contains("IGoldenService");
+            .FirstOrDefault(c => c.Identifier.Text == "Resolve");
+        await Assert.That(resolveClass).IsNull();
     }
 
     [Test]
@@ -182,5 +181,111 @@ public sealed class PicoDISourceGeneratorTests
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(static path => MetadataReference.CreateFromFile(path))
             .ToArray();
+    }
+
+    [Test]
+    public async Task ResolveMethods_OnlyGeneratedForReferencedDependencies()
+    {
+        // Generated-code redundancy: the Resolve class must only contain
+        // methods for service types actually referenced by other factories'
+        // dependency-injection chains — not one method per registration.
+        var inputSource = """
+            using PicoDI;
+            using PicoDI.Abs;
+
+            public interface IDep { }
+            public sealed class Dep : IDep { }
+
+            public interface IConsumer { }
+            public sealed class Consumer : IConsumer
+            {
+                public Consumer(IDep dep) { }
+            }
+
+            public interface IStandalone { }
+            public sealed class Standalone : IStandalone { }
+
+            public static class Setup
+            {
+                public static void Configure(SvcContainer container)
+                {
+                    container.RegisterSingleton<IDep, Dep>();
+                    container.RegisterSingleton<IConsumer, Consumer>();
+                    container.RegisterSingleton<IStandalone, Standalone>();
+                }
+            }
+            """;
+
+        var parseOptions = CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Preview);
+        var inputTree = CSharpSyntaxTree.ParseText(inputSource, parseOptions);
+
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "GeneratorInput",
+            syntaxTrees: [inputTree],
+            references: GetMetadataReferences(),
+            options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+        );
+
+        var generator = new ServiceRegistrationGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [generator.AsSourceGenerator()],
+            parseOptions: parseOptions
+        );
+
+        driver = driver.RunGeneratorsAndUpdateCompilation(
+            compilation,
+            out var outputCompilation,
+            out var diagnostics
+        );
+
+        using var ms = new MemoryStream();
+        var result = outputCompilation.Emit(ms);
+        await Assert.That(result.Success).IsTrue();
+
+        var runResult = driver.GetRunResult();
+        var registrationSource = runResult
+            .Results.SelectMany(static r => r.GeneratedSources)
+            .Single(s => s.HintName.Contains("ServiceRegistrations", StringComparison.Ordinal))
+            .SourceText.ToString();
+
+        var generatedTree = CSharpSyntaxTree.ParseText(registrationSource, parseOptions);
+        var root = await generatedTree.GetRootAsync();
+        var generatedClass = root.DescendantNodes().OfType<ClassDeclarationSyntax>().First();
+
+        var resolveClass = generatedClass
+            .DescendantNodes()
+            .OfType<ClassDeclarationSyntax>()
+            .FirstOrDefault(c => c.Identifier.Text == "Resolve");
+
+        // Resolve must be an internal implementation detail, not public API.
+        if (resolveClass is not null)
+        {
+            await Assert
+                .That(resolveClass.Modifiers.Any(m => m.IsKind(SyntaxKind.InternalKeyword)))
+                .IsTrue();
+        }
+
+        // The consumer's dependency (IDep) is referenced by Consumer's factory
+        // chain — its Resolve method must exist.
+        await Assert
+            .That(
+                resolveClass is not null
+                    && resolveClass
+                        .DescendantNodes()
+                        .OfType<MethodDeclarationSyntax>()
+                        .Any(m => m.Identifier.Text == "IDep")
+            )
+            .IsTrue();
+
+        // Standalone is never referenced by any factory chain — no Resolve method.
+        await Assert
+            .That(
+                resolveClass is null
+                    || !resolveClass
+                        .DescendantNodes()
+                        .OfType<MethodDeclarationSyntax>()
+                        .Any(m => m.Identifier.Text == "IStandalone")
+            )
+            .IsTrue();
     }
 }

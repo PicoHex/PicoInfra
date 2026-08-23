@@ -4,19 +4,24 @@ internal static partial class ServiceRegistrationSourceEmitter
 {
     /// <summary>
     /// Generates typed resolver extension methods that bypass dictionary lookup.
-    /// These provide direct factory calls for maximum performance.
+    /// Only methods for service types referenced by other factories' dependency
+    /// chains are emitted; the class is internal (an implementation detail of
+    /// the generated registrations, not public API).
     /// </summary>
     private static void GenerateTypedResolvers(
         StringBuilder sb,
         ImmutableArray<ServiceRegistration> registrations,
-        Dictionary<string, ServiceRegistration> registrationLookup
+        Dictionary<string, ServiceRegistration> registrationLookup,
+        ISet<string> referencedResolvers
     )
     {
+        if (referencedResolvers.Count == 0)
+            return;
+
         sb.AppendLine("    /// <summary>");
         sb.AppendLine("    /// High-performance typed resolvers that bypass dictionary lookup.");
-        sb.AppendLine("    /// Use these methods directly for maximum resolution speed.");
         sb.AppendLine("    /// </summary>");
-        sb.AppendLine("    public static class Resolve");
+        sb.AppendLine("    internal static class Resolve");
         sb.AppendLine("    {");
 
         var generatedMethods = new HashSet<string>();
@@ -25,6 +30,8 @@ internal static partial class ServiceRegistrationSourceEmitter
         {
             var methodName = GetResolverMethodName(reg.ServiceTypeFullName);
             if (!generatedMethods.Add(methodName))
+                continue;
+            if (!referencedResolvers.Contains(methodName))
                 continue;
 
             var effectiveRegistration = registrationLookup[reg.ServiceTypeFullName];
@@ -48,7 +55,8 @@ internal static partial class ServiceRegistrationSourceEmitter
                         registrationLookup,
                         [],
                         0,
-                        "scope"
+                        "scope",
+                        (HashSet<string>?)referencedResolvers
                     );
                     sb.AppendLine($"            return {transientFactory};");
                     break;

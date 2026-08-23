@@ -785,12 +785,24 @@ public class OpenGenericTests
                 }
             }
 
+            public interface IConsumer
+            {
+            }
+
+            public sealed class Consumer : IConsumer
+            {
+                public Consumer(IDuplicateResolverService dep)
+                {
+                }
+            }
+
             public static class RegistrationSite
             {
                 public static void Register(ISvcContainer container)
                 {
                     container.RegisterTransient<IDuplicateResolverService, FirstDuplicateResolverService>();
                     container.RegisterScoped<IDuplicateResolverService, SecondDuplicateResolverService>();
+                    container.RegisterTransient<IConsumer, Consumer>();
                 }
             }
             """;
