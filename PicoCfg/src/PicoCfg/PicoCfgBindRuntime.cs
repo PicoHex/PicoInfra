@@ -9,17 +9,16 @@ namespace PicoCfg;
 public static partial class CfgBindRuntime
 {
     /// <summary>Version number used by the source generator to ensure generated code matches this runtime.</summary>
-    public const int ContractVersion = 2;
+    public const int ContractVersion = 3;
 
     /// <summary>Registers source-generated binding delegates for <typeparamref name="T"/>.</summary>
     public static void Register<T>(
         int contractVersion,
         Func<ICfg, string?, T>? bind,
         PicoCfgGeneratedTryBindDelegate<T>? tryBind,
-        PicoCfgGeneratedBindIntoDelegate<T> bindInto
+        PicoCfgGeneratedBindIntoDelegate<T>? bindInto
     )
     {
-        ArgumentNullException.ThrowIfNull(bindInto);
         PicoCfgBindRegistrationStore<T>.Registration = new PicoCfgBindRegistration<T>(
             contractVersion,
             bind,

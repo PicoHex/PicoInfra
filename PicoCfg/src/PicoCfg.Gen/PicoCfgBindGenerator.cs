@@ -75,6 +75,11 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
         for (var i = 0; i < validTargets.Count; i++)
             sortedTypeToIndex[validTargets[i].TargetType] = i;
 
+        // Types referenced from nested properties or collection elements — their
+        // Bind_ method must be emitted even when the caller never binds them
+        // directly (the parent's generated code calls Bind_&lt;idx&gt;).
+        var referencedNestedTypes = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+
         foreach (var target in validTargets)
         {
             foreach (var prop in target.Properties)
@@ -101,6 +106,7 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
                     }
 
                     prop.NestedModelIndex = nestedIdx;
+                    referencedNestedTypes.Add(prop.NestedType);
                 }
             }
         }
@@ -111,10 +117,11 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
         {
             foreach (var prop in target.Properties)
             {
-                FillNestedElementIndices(
+                CollectReferencedNestedElementTypes(
                     prop.ElementBinding,
                     sortedTypeToIndex,
                     validTargets,
+                    referencedNestedTypes,
                     context
                 );
             }
@@ -123,7 +130,7 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
         // Phase 5: Render
         context.AddSource(
             "PicoCfgBindRegistrations.g.cs",
-            SourceText.From(Render(validTargets), Encoding.UTF8)
+            SourceText.From(Render(validTargets, referencedNestedTypes), Encoding.UTF8)
         );
     }
 
@@ -213,10 +220,11 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
     private static IEnumerable<Location> NestedTypeLocations(ITypeSymbol type) =>
         type.Locations.Length > 0 ? [type.Locations[0]] : [Location.None];
 
-    private static void FillNestedElementIndices(
+    private static void CollectReferencedNestedElementTypes(
         ElementBindingModel? element,
         Dictionary<ITypeSymbol, int> sortedTypeToIndex,
         IReadOnlyList<TargetModel> validTargets,
+        ISet<ITypeSymbol> referencedNestedTypes,
         SourceProductionContext context
     )
     {
@@ -243,9 +251,16 @@ public sealed partial class PicoCfgBindGenerator : IIncrementalGenerator
             }
 
             element.NestedModelIndex = nestedIdx;
+            referencedNestedTypes.Add(nestedType);
         }
 
-        FillNestedElementIndices(element.Element, sortedTypeToIndex, validTargets, context);
+        CollectReferencedNestedElementTypes(
+            element.Element,
+            sortedTypeToIndex,
+            validTargets,
+            referencedNestedTypes,
+            context
+        );
     }
 
     /// <summary>

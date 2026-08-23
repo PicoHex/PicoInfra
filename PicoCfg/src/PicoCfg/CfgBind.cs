@@ -107,6 +107,9 @@ public static class CfgBind
         ArgumentNullException.ThrowIfNull(instance);
 
         var registration = CfgBindRuntime.GetRequiredRegistration<T>(nameof(BindInto));
+        if (registration.BindInto is null)
+            throw PicoCfgBindRegistrationException.CreateMissing(typeof(T), nameof(BindInto));
+
         registration.BindInto(cfg, section, instance);
     }
 }

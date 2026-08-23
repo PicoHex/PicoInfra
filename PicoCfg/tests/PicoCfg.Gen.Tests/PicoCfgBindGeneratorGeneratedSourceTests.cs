@@ -62,9 +62,13 @@ public class PicoCfgBindGeneratorGeneratedSourceTests
             generatedSource,
             "global::PicoCfg.CfgBindRuntime.Register<global::AppSettings>",
             "private static global::AppSettings Bind_0",
-            "private static bool TryBind_0",
-            "private static void BindInto_0"
+            "private static void BindInto_0",
+            "tryBind: null"
         );
+
+        // DI registration entry points only need the constructing bind —
+        // TryBind_ must not be emitted (generated-code redundancy).
+        await Assert.That(generatedSource.Contains("private static bool TryBind_0")).IsFalse();
     }
 
     [Test]
