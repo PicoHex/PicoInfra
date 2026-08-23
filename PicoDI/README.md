@@ -96,8 +96,8 @@ container.RegisterHostedSvc<HealthCheckService>(scope => new HealthCheckService(
 ```csharp
 using var scope = container.CreateScope();
 
-// Typed resolution — O(1) via generated Resolve.* methods (with source gen)
-// or dictionary lookup (factory-based)
+// Typed resolution — dictionary lookup with cached registrations
+// (generated factories inline constructor chains for dependencies)
 var svc = scope.GetService<IService>();
 var repos = scope.GetServices<IRepository>();
 
@@ -140,7 +140,8 @@ in your codebase and emits:
 The generator scans all `Register*` call sites in your codebase and emits:
 
 - **`ConfigureGeneratedServices()`** — factory delegates with inlined `new` expressions
-- **`Resolve.*` typed resolvers** — zero-dictionary-lookup resolution for registered types
+  and inlined dependency chains (internal typed resolvers, pruned to referenced
+  dependencies only)
 - **Compile-time circular dependency detection** — PICO002 error at build time
 - **Open generic metadata** — cross-assembly discovery for `Register(typeof(I<>), typeof(C<>))`
 - **`[ModuleInitializer]` auto-configurator** — zero-config startup, no manual Build step needed

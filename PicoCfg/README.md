@@ -126,6 +126,12 @@ if (CfgBind.TryBind<AppSettings>(cfg, out var result, "App"))
 // BindInto — populate an existing instance
 var instance = new AppSettings();
 CfgBind.BindInto(cfg, instance, "App");
+
+// Note: BindInto requires the type to have been used with CfgBind.BindInto<T>()
+// (or Bind<T>()/TryBind<T>() for classes with a public parameterless
+// constructor). Nested-only types — referenced exclusively from other DTOs —
+// register only a constructing bind; calling BindInto on them throws
+// PicoCfgBindRegistrationException.
 ```
 
 Supported property types: `string`, `bool`, `int`, `long`, `float`, `double`, `decimal`, `Guid`, `enum`, `DateTime`, `DateTimeOffset`, `DateOnly`, `TimeOnly`, `TimeSpan`, `Uri`, `Version`, `BigInteger`, nested classes, `List<T>`, `T[]`, `Dictionary<string,T>`, `IReadOnlyList<T>`, `IReadOnlyCollection<T>`, `IEnumerable<T>`.
