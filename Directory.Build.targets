@@ -1,5 +1,26 @@
 <Project>
   <!--
+    Aggressive AOT tier implementation. Must live in this .targets file (not
+    Directory.Build.props): a csproj-level <AotOptimizationLevel> is evaluated
+    after Directory.Build.props, so a condition there never sees the override.
+    Samples and benchmarks declare <AotOptimizationLevel>aggressive</AotOptimizationLevel>
+    as the production-configuration preview; tests stay on minimal.
+  -->
+  <PropertyGroup Condition="'$(AotOptimizationLevel)' == 'aggressive'">
+    <PublishAot Condition="'$(PublishAot)' == ''">true</PublishAot>
+    <TrimMode Condition="'$(TrimMode)' == ''">full</TrimMode>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <PublishTrimmed>true</PublishTrimmed>
+    <IlcTrimMetadata>true</IlcTrimMetadata>
+    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
+    <IlcDisableReflection>true</IlcDisableReflection>
+    <IlcGenerateDebugInfo>false</IlcGenerateDebugInfo>
+    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
+    <IlcGenerateUnwindStackTraceData>false</IlcGenerateUnwindStackTraceData>
+  </PropertyGroup>
+
+  <!--
     PublishAotIfRequested: when PublishAotOnRun is true, intercepts dotnet run
     to publish as AOT first, then execute the native binary.
     Gates: only for Exe projects (libraries cannot self-publish).

@@ -24,7 +24,9 @@
     AotOptimizationLevel:
       minimal  — Tests and default. PublishAot + TrimMode only, fast compilation.
       aggressive — Samples and Benchmarks. Full trimming, no reflection, no debug info.
-    Override per-project via <AotOptimizationLevel>aggressive</AotOptimizationLevel>.
+    Declare the tier per-project via <AotOptimizationLevel>; the aggressive-tier
+    properties live in Directory.Build.targets (evaluated after the project file,
+    so csproj-level declarations actually take effect there).
   -->
   <PropertyGroup>
     <AotOptimizationLevel Condition="'$(AotOptimizationLevel)' == ''">minimal</AotOptimizationLevel>
@@ -40,20 +42,6 @@
     <IlcTrimMetadata>true</IlcTrimMetadata>
     <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <IlcDisableReflection>true</IlcDisableReflection>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(AotOptimizationLevel)' == 'aggressive'">
-    <PublishAot Condition="'$(PublishAot)' == ''">true</PublishAot>
-    <TrimMode Condition="'$(TrimMode)' == ''">full</TrimMode>
-    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
-    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
-    <PublishTrimmed>true</PublishTrimmed>
-    <IlcTrimMetadata>true</IlcTrimMetadata>
-    <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
-    <IlcDisableReflection>true</IlcDisableReflection>
-    <IlcGenerateDebugInfo>false</IlcGenerateDebugInfo>
-    <IlcGenerateCompleteTypeMetadata>false</IlcGenerateCompleteTypeMetadata>
-    <IlcGenerateUnwindStackTraceData>false</IlcGenerateUnwindStackTraceData>
   </PropertyGroup>
 
   <!-- ⚠️ netstandard2.0 must NEVER AOT — this block MUST come after the AOT level blocks.
