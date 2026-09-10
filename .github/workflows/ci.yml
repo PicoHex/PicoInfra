@@ -34,6 +34,7 @@ jobs:
       pico-log: ${{ steps.filter.outputs.pico-log }}
       pico-aop: ${{ steps.filter.outputs.pico-aop }}
       pico-mediator: ${{ steps.filter.outputs.pico-mediator }}
+      pico-schedule: ${{ steps.filter.outputs.pico-schedule }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -73,6 +74,13 @@ jobs:
               - 'global.json'
             pico-log:
               - 'PicoLog/**'
+              - 'Directory.Build.props'
+              - 'Directory.Build.targets'
+              - 'Directory.Packages.props'
+              - '.github/**'
+              - 'global.json'
+            pico-schedule:
+              - 'PicoSchedule/**'
               - 'Directory.Build.props'
               - 'Directory.Build.targets'
               - 'Directory.Packages.props'
@@ -717,3 +725,56 @@ jobs:
             -p:RestoreSources="$NUGET_SOURCE" \
             -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
             -p:RestorePackagesPath="$GITHUB_WORKSPACE/artifacts/ci-packages/di"
+
+  # ---------------------------------------------------------------------------
+  # PicoSchedule
+  # ---------------------------------------------------------------------------
+  validate-picoschedule:
+    name: PicoSchedule (${{ matrix.logical-target }})
+    needs: changes
+    if: needs.changes.outputs.pico-schedule == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - logical-target: win-x64
+            runs-on: windows-latest
+            rid: win-x64
+          - logical-target: win-arm64
+            runs-on: windows-11-arm
+            rid: win-arm64
+          - logical-target: linux-x64
+            runs-on: ubuntu-latest
+            rid: linux-x64
+          - logical-target: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            rid: linux-arm64
+          - logical-target: osx-arm64
+            runs-on: macos-latest
+            rid: osx-arm64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Restore dependencies
+        run: |
+          mkdir -p ./artifacts/nupkg
+          dotnet restore PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj
+
+      - name: Build
+        run: dotnet build PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-restore
+
+      - name: Run PicoSchedule tests
+        run: dotnet test --project PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-build
+
+      - name: Pack CI package (package-consumer validation)
+        shell: bash
+        run: |
+          rm -rf ./artifacts/ci-nupkg
+          mkdir -p ./artifacts/ci-nupkg
+          dotnet pack PicoSchedule/src/PicoSchedule/PicoSchedule.csproj             --configuration Release             --output ./artifacts/ci-nupkg             -p:Version="0.0.0-ci"

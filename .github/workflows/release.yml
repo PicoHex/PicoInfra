@@ -60,6 +60,7 @@ jobs:
           dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release
           dotnet test --project PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj --configuration Release
           dotnet test --project PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj --configuration Release
+          dotnet test --project PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release
 
       - name: Pack all packages
         shell: bash
@@ -83,6 +84,11 @@ jobs:
             -p:Version="$VERSION" \
             -p:UseProjectReferences=true \
             -p:RestoreAdditionalProjectSources="$NUPKG_DIR"
+          # ---- PicoSchedule (standalone, zero dependencies) ----
+          dotnet pack PicoSchedule/src/PicoSchedule/PicoSchedule.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION"
 
           dotnet pack PicoMediator/src/PicoMediator.Abs/PicoMediator.Abs.csproj \
             --configuration Release \

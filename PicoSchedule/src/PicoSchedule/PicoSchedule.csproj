@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PicoSchedule</RootNamespace>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <IsPackable>true</IsPackable>
+    <PackageId>PicoSchedule</PackageId>
+    <Description>PicoSchedule — embedded AOT-first scheduling framework (timing wheel, cron dialect fully supported, multi-type trigger ports). Zero dependencies.</Description>
+    <PackageTags>PicoHex;Schedule;Cron;AOT;TimingWheel</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <!-- Zero PackageReference by design (framework spec §1/§2) -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
+
+</Project>

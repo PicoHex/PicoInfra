@@ -102,4 +102,12 @@
   <Folder Name="/PicoMediator/samples/">
     <Project Path="PicoMediator/samples/PicoMediator.Sample/PicoMediator.Sample.csproj" />
   </Folder>
+
+  <!-- PicoSchedule -->
+  <Folder Name="/PicoSchedule/src/">
+    <Project Path="PicoSchedule/src/PicoSchedule/PicoSchedule.csproj" />
+  </Folder>
+  <Folder Name="/PicoSchedule/tests/">
+    <Project Path="PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj" />
+  </Folder>
 </Solution>
