@@ -201,4 +201,4 @@ All wiring is resolved at compile time. At runtime:
 | **ref/out/in params** | ❌ Delegated | ✅ | ✅ |
 | **Generic methods** | ❌ Future | ✅ | ✅ |
 
-[← Back to PicoHex](../README.md)
+[← Back to PicoInfra](../README.md)

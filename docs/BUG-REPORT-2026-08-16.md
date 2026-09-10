@@ -1,6 +1,6 @@
 # PicoHex Monorepo — Bug Report
 
-- **Repository**: PicoHex/PicoHex (`D:/MyProjects/PicoHex/PicoHex`)
+- **Repository**: PicoHex/PicoInfra (`D:/MyProjects/PicoHex/PicoInfra`)
 - **Commit**: `e9ed4f8` — "build: update all NuGet packages to latest stable" (HEAD, 2026-08-13)
 - **Environment**: Windows x64, .NET SDK `10.0.301`, net10.0, `PublishAot=true` (repo default), Release config
 - **Date of investigation**: 2026-08-16 (fresh analysis; no source code was modified)

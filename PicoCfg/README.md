@@ -200,4 +200,4 @@ container.RegisterCfgOptionsScoped<AppSettings>();     // ICfgOptions<T> snapsho
 | **PicoCfg.Gen** | `CfgBind.Bind<T>` source generator |
 | **PicoCfg.DI** | DI integration |
 
-[← Back to PicoHex](../README.md)
+[← Back to PicoInfra](../README.md)

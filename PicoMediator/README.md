@@ -252,4 +252,4 @@ Without the generator, `Mediator.Send()` still works via the runtime `GetService
 | **PicoMediator.Gen** | Source generator — switch dispatch + handler registrations |
 | **PicoMediator.DI** | `container.AddPicoMediator()` |
 
-[← Back to PicoHex](../README.md)
+[← Back to PicoInfra](../README.md)

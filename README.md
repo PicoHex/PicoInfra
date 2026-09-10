@@ -1,4 +1,4 @@
-# PicoHex
+# PicoInfra
 
 **AOT-First Universal Minimal Infrastructure for .NET**
 
@@ -6,14 +6,14 @@ Zero runtime reflection. Zero `Activator.CreateInstance`. Zero expression tree c
 All infrastructure wiring happens at **compile time** through C# source generators.
 
 [![NuGet](https://img.shields.io/nuget/v/PicoDI)](https://nuget.org/packages/PicoDI)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/PicoHex/PicoHex/blob/main/LICENSE)
-[![CI](https://github.com/PicoHex/PicoHex/actions/workflows/ci.yml/badge.svg)](https://github.com/PicoHex/PicoHex/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/PicoHex/PicoInfra/blob/main/LICENSE)
+[![CI](https://github.com/PicoHex/PicoInfra/actions/workflows/ci.yml/badge.svg)](https://github.com/PicoHex/PicoInfra/actions/workflows/ci.yml)
 
 ---
 
 ## Overview
 
-PicoHex is a **modular infrastructure toolkit** for .NET — five libraries that replace the `Microsoft.Extensions.*` family in AOT-trimmed / Native AOT environments.
+PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries that replace the `Microsoft.Extensions.*` family in AOT-trimmed / Native AOT environments.
 
 | Module | Role | Packages |
 |---|---|---|
@@ -29,7 +29,7 @@ Each module is **independent** — use one, some, or all. DI integration package
 
 ## Comparison with Microsoft.Extensions
 
-| Concern | `Microsoft.Extensions.*` | PicoHex |
+| Concern | `Microsoft.Extensions.*` | PicoInfra |
 |---|---|---|
 | **Runtime reflection** | Heavy (`Activator.CreateInstance`, expression trees) | **Zero** — all code paths are source-generated |
 | **Native AOT readiness** | Requires careful opt-in, trimming annotations, reflection-free config | **AOT First** — compiles natively out of the box |
@@ -285,7 +285,7 @@ var user = await mediator.Send<GetUser, User>(new GetUser(1));
 
 ## Source Generator Architecture
 
-Every PicoHex module uses `IIncrementalGenerator` for caching, incremental builds, and fast IDE experience.
+Every PicoInfra module uses `IIncrementalGenerator` for caching, incremental builds, and fast IDE experience.
 
 | Generator | Input | Output |
 |---|---|---|
@@ -482,4 +482,4 @@ Each module ships its own benchmarks under `*/benchmarks/`. Key results:
 
 ---
 
-MIT License. [https://github.com/PicoHex/PicoHex](https://github.com/PicoHex/PicoHex)
+MIT License. [https://github.com/PicoHex/PicoInfra](https://github.com/PicoHex/PicoInfra)

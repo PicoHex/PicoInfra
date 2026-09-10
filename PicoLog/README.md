@@ -3,7 +3,7 @@
 High-performance structured logging for .NET Native AOT.
 
 [![NuGet](https://img.shields.io/nuget/v/PicoLog)](https://nuget.org/packages/PicoLog)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/PicoHex/PicoHex/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/PicoHex/PicoInfra/blob/main/LICENSE)
 
 [English](README.md) | [简体中文](README.zh.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Português](README.pt.md) | [繁體中文](README.zh-tw.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
 
@@ -414,4 +414,4 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 | **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator |
 | **PicoLog.DI** | net10.0 | DI integration (`AddPicoLog`, `WriteTo`, `ReadFrom`) |
 
-[← Back to PicoHex](../README.md)
+[← Back to PicoInfra](../README.md)

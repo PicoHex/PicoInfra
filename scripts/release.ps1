@@ -2,7 +2,7 @@
 #
 # Why: after pushing a release tag, nuget.org needs minutes to index the new
 # packages (plus NuGet's 30-minute HTTP index cache on consumer machines).
-# Sibling repos (PicoActor, PicoNode, PicoAgent, ...) consume PicoHex packages
+# Sibling repos (PicoActor, PicoNode, PicoAgent, ...) consume PicoInfra packages
 # via PackageReference, so local development would stall until indexing
 # completes. This script packs ALL packages into the local folder feed
 # (NuGet.config: local -> artifacts/nupkg) before tagging, so local restores
@@ -131,7 +131,7 @@ try {
 
     # --- Tag + push ----------------------------------------------------------------
 
-    git tag -a $tag -m "PicoHex $Version - packed locally + published via release.yml"
+    git tag -a $tag -m "PicoInfra $Version - packed locally + published via release.yml"
     if ($LASTEXITCODE -ne 0) { Fail "git tag failed" }
 
     if (-not $NoPush) {

@@ -356,4 +356,4 @@ PicoDI is designed for concurrent use:
 | **PicoDI.Abs** | Abstractions: `ISvcContainer`, `ISvcScope`, `SvcDescriptor`, `SvcLifetime`, `IHostedSvc`, `BackgroundSvc` |
 | **PicoDI.Gen** | Roslyn source generator + diagnostic analyzer (**embedded** in PicoDI.Abs — no separate reference needed) |
 
-[← Back to PicoHex](../README.md)
+[← Back to PicoInfra](../README.md)

@@ -18,7 +18,7 @@ public sealed class InterceptorConstructionTests
     static InterceptorConstructionTests()
     {
         var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "PicoHex.slnx")))
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "PicoInfra.slnx")))
             dir = dir.Parent;
         if (dir is null)
             return;
@@ -26,8 +26,8 @@ public sealed class InterceptorConstructionTests
         foreach (
             var rel in new[]
             {
-                "PicoAop/src/PicoAop.Abs/bin/Debug/netstandard2.0/PicoAop.Abs.dll",
-                "PicoAop/src/PicoAop.Abs/bin/Release/netstandard2.0/PicoAop.Abs.dll",
+                "PicoAop/src/PicoAop.Abs/bin/Debug/net10.0/PicoAop.Abs.dll",
+                "PicoAop/src/PicoAop.Abs/bin/Release/net10.0/PicoAop.Abs.dll",
             }
         )
         {

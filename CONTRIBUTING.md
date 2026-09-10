@@ -1,19 +1,19 @@
-# Contributing to PicoHex
+# Contributing to PicoInfra
 
-Thanks for your interest in contributing. PicoHex is a minimal, AOT-first infrastructure library for .NET. This guide covers the basics to get you started.
+Thanks for your interest in contributing. PicoInfra is a minimal, AOT-first infrastructure library for .NET. This guide covers the basics to get you started.
 
 ## Build Commands
 
 Build the entire solution:
 
 ```shell
-dotnet build PicoHex.slnx
+dotnet build PicoInfra.slnx
 ```
 
 Build with AOT validation:
 
 ```shell
-dotnet build PicoHex.slnx -p:PublishAot=true
+dotnet build PicoInfra.slnx -p:PublishAot=true
 ```
 
 ## Test Commands
@@ -31,7 +31,7 @@ dotnet test PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj
 Or run all tests at once:
 
 ```shell
-dotnet test PicoHex.slnx
+dotnet test PicoInfra.slnx
 ```
 
 ### Testing-Platform 2.x flakiness ("Zero tests ran")
@@ -67,7 +67,7 @@ reliable path for local development; CI uses `dotnet test` after a clean build.
 4. Run the build and all tests:
 
    ```shell
-   dotnet build PicoHex.slnx && dotnet test PicoHex.slnx
+   dotnet build PicoInfra.slnx && dotnet test PicoInfra.slnx
    ```
 
 5. Push your branch and open a pull request against `main`.
@@ -79,7 +79,7 @@ reliable path for local development; CI uses `dotnet test` after a clean build.
 This project uses the following C# conventions:
 
 - **Nullable enabled**: All projects have `<Nullable>enable</Nullable>`. Write null-safe code.
-- **File-scoped namespaces**: Use `namespace PicoHex.Foo;` not block-scoped namespaces.
+- **File-scoped namespaces**: Use `namespace PicoInfra.Foo;` not block-scoped namespaces.
 - **Target-typed new**: Use `new()` instead of repeating the type name when the type is obvious.
 - **Sealed types**: Prefer `sealed class` unless the type is designed for inheritance.
 - **Primary constructors**: Use primary constructors for simple types that take dependencies.
@@ -89,12 +89,12 @@ This project uses the following C# conventions:
 Run `dotnet format` before committing to catch style issues automatically:
 
 ```shell
-dotnet format PicoHex.slnx --verbosity normal
+dotnet format PicoInfra.slnx --verbosity normal
 ```
 
 ## AOT Testing Guide
 
-PicoHex is AOT-first. Before submitting, verify your changes compile with Native AOT:
+PicoInfra is AOT-first. Before submitting, verify your changes compile with Native AOT:
 
 ```shell
 # Publish a test project with AOT enabled

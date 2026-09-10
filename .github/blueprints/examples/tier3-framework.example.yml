@@ -13,9 +13,9 @@ jobs:
     with:
       dotnet-version: 10.0.x
       runner-os-json: '["ubuntu-latest","windows-latest","macos-latest"]'
-      restore-command: dotnet restore PicoHex.slnx
-      build-command: dotnet build PicoHex.slnx --configuration Release --no-restore
-      test-command: dotnet test PicoHex.slnx --configuration Release --no-build --verbosity normal
+      restore-command: dotnet restore PicoInfra.slnx
+      build-command: dotnet build PicoInfra.slnx --configuration Release --no-restore
+      test-command: dotnet test PicoInfra.slnx --configuration Release --no-build --verbosity normal
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

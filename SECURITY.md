@@ -8,11 +8,11 @@
 
 ## Reporting a Vulnerability
 
-PicoHex takes security seriously. If you discover a security vulnerability, please do **not** open a public issue.
+PicoInfra takes security seriously. If you discover a security vulnerability, please do **not** open a public issue.
 
 Instead, report it privately by emailing the maintainers at **security@picohex.dev** or by opening a draft security advisory on GitHub:
 
-1. Go to [https://github.com/PicoHex/PicoHex/security/advisories/new](https://github.com/PicoHex/PicoHex/security/advisories/new).
+1. Go to [https://github.com/PicoHex/PicoInfra/security/advisories/new](https://github.com/PicoHex/PicoInfra/security/advisories/new).
 2. Provide a detailed description of the vulnerability.
 3. Include steps to reproduce, affected versions, and any potential impact.
 
@@ -31,4 +31,4 @@ We aim to resolve critical issues within 7 days of confirmation.
 
 ## Scope
 
-This policy applies to the PicoHex core libraries (PicoDI, PicoCfg, PicoLog and their abstractions, source generators, and DI integration packages). For vulnerabilities in dependencies, please report to the respective upstream project.
+This policy applies to the PicoInfra core libraries (PicoDI, PicoCfg, PicoLog and their abstractions, source generators, and DI integration packages). For vulnerabilities in dependencies, please report to the respective upstream project.

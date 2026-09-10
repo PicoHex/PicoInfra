@@ -60,12 +60,12 @@ Use these consumer wrappers after moving the reusable workflows into `PicoHex/.g
 - Release wrapper should call `picohex-dotnet-release.yml`
 - Optional tag-only AOT wrapper should call `picohex-dotnet-aot.yml`
 
-Suggested repo-specific commands for `PicoHex`:
+Suggested repo-specific commands for `PicoInfra`:
 
 ```bash
-dotnet restore PicoHex.slnx
-dotnet build PicoHex.slnx --configuration Release --no-restore
-dotnet test PicoHex.slnx --configuration Release --no-build --verbosity normal
+dotnet restore PicoInfra.slnx
+dotnet build PicoInfra.slnx --configuration Release --no-restore
+dotnet test PicoInfra.slnx --configuration Release --no-build --verbosity normal
 ```
 
 Suggested release pack order for the DI chain:
