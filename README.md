@@ -13,7 +13,7 @@ All infrastructure wiring happens at **compile time** through C# source generato
 
 ## Overview
 
-PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries that replace the `Microsoft.Extensions.*` family in AOT-trimmed / Native AOT environments.
+PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries that replace the `Microsoft.Extensions.*` family in AOT-trimmed / Native AOT environments, plus **PicoSchedule**, an embedded AOT-first scheduling framework.
 
 | Module | Role | Packages |
 |---|---|---|
@@ -22,6 +22,7 @@ PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries th
 | **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` `PicoLog.Gen` |
 | **PicoAop** | AOT Interception (AOP) | `PicoAop.Abs` `PicoAop.Gen` `PicoAop.DI` |
 | **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` `PicoMediator.Gen` |
+| **PicoSchedule** | Embedded AOT Scheduling (cron) | `PicoSchedule` |
 
 Each module is **independent** — use one, some, or all. DI integration packages (`PicoCfg.DI`, `PicoLog.DI`, `PicoMediator.DI`, `PicoAop.DI`) bridge modules into the container.
 
