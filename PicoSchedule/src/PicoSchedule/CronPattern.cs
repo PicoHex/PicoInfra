@@ -79,8 +79,9 @@ public sealed class CronPattern
     /// <summary>Parses a 5-field (min hour dom mon dow) or 6-field (leading
     /// seconds) cron expression covering the full dialect: `*`, `*/n`, `a-b`,
     /// `a,b,c`, `?` (dom/dow), dow `N#K` (K-th weekday), `L` / `NL` (last),
-    /// dom `Nw` (nearest weekday), name aliases (mon..sun / jan..dec) and
-    /// `@hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight`.
+    /// dom `Nw` (nearest weekday), name aliases (mon..sun / jan..dec —
+    /// composable inside ranges/lists and the dow `N#K` / `NL` modifiers)
+    /// and `@hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight`.
     /// Throws <see cref="ArgumentException"/> on syntax errors and
     /// out-of-range values.</summary>
     public static CronPattern Parse(string expr)
@@ -103,8 +104,8 @@ public sealed class CronPattern
         fields[1] = ParseBits(parts[i++], 0, 59);
         fields[2] = ParseBits(parts[i++], 0, 23);
         var dom = ParseDom(parts[i++]);
-        fields[4] = ParseBits(ExpandAliases(parts[i++], MonthAliases), 1, 12);
-        var dow = ParseDow(ExpandAliases(parts[i], DowAliases));
+        fields[4] = ParseBits(parts[i++], 1, 12, MonthAliases);
+        var dow = ParseDow(parts[i], DowAliases);
 
         return new CronPattern(fields, hasSeconds, dom, dow);
     }
@@ -253,12 +254,12 @@ public sealed class CronPattern
         return new DayOfMonthSpec(ParseBits(raw, 1, 31), LastDay: false, NearestDay: null);
     }
 
-    private static DayOfWeekSpec ParseDow(string raw)
+    private static DayOfWeekSpec ParseDow(string raw, Dictionary<string, int> aliases)
     {
         if (raw.Contains('#', StringComparison.Ordinal))
         {
             var idx = raw.IndexOf('#');
-            var dow = ParseInt(raw[..idx], 0, 7) % 7;
+            var dow = ParseAtom(raw[..idx], 0, 7, aliases) % 7;
             var nth = ParseInt(raw[(idx + 1)..], 1, 5);
             var bits = new bool[8];
             bits[dow] = true;
@@ -266,15 +267,20 @@ public sealed class CronPattern
         }
         if (raw.Length >= 2 && raw[^1] is 'L' or 'l')
         {
-            var dow = ParseInt(raw[..^1], 0, 7) % 7;
+            var dow = ParseAtom(raw[..^1], 0, 7, aliases) % 7;
             var bits = new bool[8];
             bits[dow] = true;
             return new DayOfWeekSpec(bits, Nth: null, LastDow: dow);
         }
-        return new DayOfWeekSpec(ParseBits(raw, 0, 7), Nth: null, LastDow: null);
+        return new DayOfWeekSpec(ParseBits(raw, 0, 7, aliases), Nth: null, LastDow: null);
     }
 
-    private static bool[] ParseBits(string raw, int lo, int hi)
+    private static bool[] ParseBits(
+        string raw,
+        int lo,
+        int hi,
+        Dictionary<string, int>? aliases = null
+    )
     {
         if (raw is "*" or "?")
             return Range(lo, hi);
@@ -289,8 +295,8 @@ public sealed class CronPattern
                 var rangeParts = item.Split('-');
                 if (rangeParts.Length != 2)
                     throw new ArgumentException($"invalid field element '{item}'");
-                var a = ParseInt(rangeParts[0], lo, hi);
-                var b = ParseInt(rangeParts[1], lo, hi);
+                var a = ParseAtom(rangeParts[0], lo, hi, aliases);
+                var b = ParseAtom(rangeParts[1], lo, hi, aliases);
                 if (a > b)
                     throw new ArgumentException($"range '{item}' is descending");
                 for (var v = a; v <= b; v++)
@@ -298,25 +304,20 @@ public sealed class CronPattern
             }
             else
             {
-                set[ParseInt(item, lo, hi)] = true;
+                set[ParseAtom(item, lo, hi, aliases)] = true;
             }
         }
         return set;
     }
 
-    private static string ExpandAliases(string raw, Dictionary<string, int> aliases)
+    /// <summary>Resolve one field atom — an exact name alias (case-insensitive)
+    /// or a numeric value in range. Aliases compose with ranges, lists and the
+    /// dow `N#K` / `NL` modifiers because resolution happens per atom.</summary>
+    private static int ParseAtom(string raw, int lo, int hi, Dictionary<string, int>? aliases)
     {
-        if (!raw.Contains(',', StringComparison.Ordinal))
-        {
-            return aliases.TryGetValue(raw, out var v) ? v.ToString() : raw;
-        }
-        var items = raw.Split(',');
-        for (var k = 0; k < items.Length; k++)
-        {
-            if (aliases.TryGetValue(items[k], out var v))
-                items[k] = v.ToString();
-        }
-        return string.Join(',', items);
+        if (aliases is not null && aliases.TryGetValue(raw, out var named))
+            return named;
+        return ParseInt(raw, lo, hi);
     }
 
     private static bool[] Step(int lo, int hi, int step)
