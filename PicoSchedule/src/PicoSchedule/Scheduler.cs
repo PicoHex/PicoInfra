@@ -268,8 +268,6 @@ public sealed class Scheduler
         }
     }
 
-    /// <summary>Pause / Resume / Reschedule land in Task 4; flush + execution
-    /// model in Tasks 5/6. The tick loop is driven by <see cref="FlushAsync"/>.</summary>
     /// <summary>Internal: run one flush WITHOUT waiting for sinks (used by
     /// tests that hold sinks in-flight; production loops use this too).</summary>
     internal Task FlushCoreOnlyAsync(DateTimeOffset nowUtc, CancellationToken ct = default) =>
