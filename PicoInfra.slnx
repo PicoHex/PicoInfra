@@ -110,4 +110,7 @@
   <Folder Name="/PicoSchedule/tests/">
     <Project Path="PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj" />
   </Folder>
+  <Folder Name="/PicoSchedule/samples/">
+    <Project Path="PicoSchedule/samples/PicoSchedule.Sample/PicoSchedule.Sample.csproj" />
+  </Folder>
 </Solution>

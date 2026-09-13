@@ -761,6 +761,12 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install Linux AOT prerequisites
+        if: startsWith(matrix.rid, 'linux-')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
@@ -771,6 +777,25 @@ jobs:
 
       - name: Run PicoSchedule tests
         run: dotnet test --project PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-build
+
+      - name: AOT publish validation
+        run: dotnet publish PicoSchedule/samples/PicoSchedule.Sample/ -r ${{ matrix.rid }} --configuration Release
+
+      - name: Run AOT-published sample (publish != run guard)
+        shell: bash
+        run: |
+          # Glob the TFM segment so a TargetFramework bump does not silently
+          # break this guard (ls -d returns 0 even with no match; guard it).
+          PUBLISH_DIR=$(ls -d PicoSchedule/samples/PicoSchedule.Sample/bin/Release/*/${{ matrix.rid }}/publish | head -n 1)
+          if [ -z "$PUBLISH_DIR" ]; then
+            echo "::error::publish directory not found for PicoSchedule.Sample"
+            exit 1
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$PUBLISH_DIR/PicoSchedule.Sample.exe"
+          else
+            "$PUBLISH_DIR/PicoSchedule.Sample"
+          fi
 
       - name: Pack CI package (package-consumer validation)
         shell: bash
