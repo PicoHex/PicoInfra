@@ -29,6 +29,7 @@ public sealed class Scheduler
     private IReadOnlyList<JobSnapshot> _snapshot = Array.Empty<JobSnapshot>();
     private DateTimeOffset _lastFlushedUtc = DateTimeOffset.MinValue;
     private volatile bool _running;
+    private bool _stopped;
     private CancellationTokenSource? _loopCts;
 
     public Scheduler(SchedulerOptions options)
@@ -70,17 +71,25 @@ public sealed class Scheduler
     }
 
     /// <summary>Starts the background tick loop. One-shot lifecycle: only
-    /// valid before the first Stop.</summary>
+    /// valid before the first Stop — a stopped scheduler cannot be restarted
+    /// (a host restart creates a new instance).</summary>
     public void Start()
     {
+        CancellationTokenSource cts;
         lock (_gate)
         {
+            if (_stopped)
+                throw new InvalidOperationException(
+                    "scheduler was stopped — lifecycle is one-shot; create a new instance"
+                );
             if (_running)
                 throw new InvalidOperationException("scheduler already started");
             _running = true;
-            _loopCts = new CancellationTokenSource();
+            cts = _loopCts = new CancellationTokenSource();
         }
-        _ = _loopTask = Task.Run(() => RunLoopAsync(_loopCts.Token));
+        // Capture the source locally: StopAsync nulls _loopCts, and a
+        // start-then-immediate-stop race must not NRE inside the loop lambda.
+        _ = _loopTask = Task.Run(() => RunLoopAsync(cts.Token));
     }
 
     /// <summary>Stops the loop and waits for in-flight sink calls to finish
@@ -91,6 +100,7 @@ public sealed class Scheduler
         Task? loop;
         lock (_gate)
         {
+            _stopped = true;
             cts = _loopCts;
             loop = _loopTask;
             _running = false;
@@ -110,6 +120,7 @@ public sealed class Scheduler
                 );
             }
         }
+        cts?.Dispose(); // cancel → join → dispose: token source never outlives the loop wait
         // Wait for in-flight sinks (bounded) — UNCONDITIONAL: sinks started
         // via test/manual flush paths are drained even when the loop never ran.
         List<Task> inFlight;
@@ -224,6 +235,7 @@ public sealed class Scheduler
                 _clock.UtcNow,
                 existing.Entry.Tz
             );
+            existing.Entry.IntervalEstimate = null; // new fire cycle — recompute lazily
             var slot = SlotOf(existing.Entry.NextFireUtc);
             AddToSlot(slot, existing.Entry);
             _byJobId[jobId] = (slot, existing.Entry);
@@ -244,6 +256,7 @@ public sealed class Scheduler
             RemoveFromSlot(existing.Slot, existing.Entry);
             existing.Entry.Cron = cron;
             existing.Entry.NextFireUtc = cron.NextFire(_clock.UtcNow, existing.Entry.Tz);
+            existing.Entry.IntervalEstimate = null; // cron changed — stale estimate
             var slot = SlotOf(existing.Entry.NextFireUtc);
             AddToSlot(slot, existing.Entry);
             _byJobId[jobId] = (slot, existing.Entry);
@@ -307,10 +320,20 @@ public sealed class Scheduler
                 return; // monotonic guard — stale clock input ignored
             _lastFlushedUtc = now;
 
-            // 1) candidates: enabled entries in slots ≤ now
+            // 1) candidates: enabled entries in slots ≤ now. Keys are ordered —
+            // collect due slots and STOP at the first future slot (a full-key
+            // LINQ scan would examine every future slot on every tick).
             var due = new List<(JobEntry Entry, string TzId)>();
-            var slots = _wheel.Keys.Where(k => k <= SlotOf(now)).ToList();
-            foreach (var slot in slots)
+            var nowSlot = SlotOf(now);
+            var dueSlots = new List<long>();
+            foreach (var slot in _wheel.Keys)
+            {
+                WheelSlotsExamined++;
+                if (slot > nowSlot)
+                    break;
+                dueSlots.Add(slot);
+            }
+            foreach (var slot in dueSlots)
             {
                 if (!_wheel.TryGetValue(slot, out var list))
                     continue;
@@ -318,10 +341,10 @@ public sealed class Scheduler
                 {
                     if (!entry.Enabled || entry.NextFireUtc > now)
                         continue;
-                    // 2) grace judgment (per-entry policy)
-                    var grace = GraceFor(entry, now);
-                    var overdue = now - entry.NextFireUtc;
-                    if (overdue > grace)
+                    // 2) grace judgment (per-entry policy) — the [60s, 2h] clamp
+                    // bounds short-circuit the O(minutes) interval estimate when
+                    // it cannot change the outcome (see BeyondGrace).
+                    if (BeyondGrace(entry, now))
                     {
                         FastForward(entry, now); // 3) beyond grace / disabled
                     }
@@ -369,6 +392,11 @@ public sealed class Scheduler
                         .Sink.FireAsync(entry.JobId, dueUtc, entry.Payload, ct)
                         .ConfigureAwait(false);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Loop/shutdown cancellation, not a job failure — recording it
+                    // would count a clean shutdown against the failure budget.
+                }
                 catch (Exception ex)
                 {
                     RecordFailure(entry, ex);
@@ -391,29 +419,51 @@ public sealed class Scheduler
         }
     }
 
-    private TimeSpan GraceFor(JobEntry entry, DateTimeOffset now)
+    /// <summary>True when the slot is overdue beyond the entry's grace window.
+    /// <c>HalfPeriodClamped</c> grace is clamped to [60s, 2h]: an overdue at or
+    /// below the floor is always inside, above the ceiling always beyond — the
+    /// exact estimate (O(minutes-to-next-fire) per call) is only needed for the
+    /// (60s, 2h] band, where the cached per-cycle value is reused across ticks.</summary>
+    private bool BeyondGrace(JobEntry entry, DateTimeOffset now)
     {
+        var overdue = now - entry.NextFireUtc;
         var mode = _graceModes.TryGetValue(entry.JobId, out var m)
             ? m
             : GraceMode.HalfPeriodClamped;
-        var fixedGrace = _fixedGraces.TryGetValue(entry.JobId, out var f) ? f : (TimeSpan?)null;
-        return mode switch
+        switch (mode)
         {
-            GraceMode.Disabled => TimeSpan.Zero,
-            GraceMode.Fixed => fixedGrace ?? TimeSpan.Zero,
-            _ => HalfPeriodClamped(entry, now),
-        };
+            case GraceMode.Disabled:
+                return overdue > TimeSpan.Zero;
+            case GraceMode.Fixed:
+                return overdue
+                    > (_fixedGraces.TryGetValue(entry.JobId, out var f) ? f : TimeSpan.Zero);
+            default:
+                if (overdue <= TimeSpan.FromSeconds(60))
+                    return false; // inside the clamp floor — always due, no estimate
+                if (overdue > TimeSpan.FromHours(2))
+                    return true; // beyond the clamp ceiling — always fast-forward
+                return overdue > HalfPeriodClamped(entry, now);
+        }
     }
 
-    private static TimeSpan HalfPeriodClamped(JobEntry entry, DateTimeOffset now)
+    private TimeSpan HalfPeriodClamped(JobEntry entry, DateTimeOffset now)
     {
-        var interval = entry.Cron.EstimateInterval(now, entry.Tz);
+        // Interval estimation probes minute-by-minute (O(minutes-to-next-fire) per
+        // call, e.g. ~33ms for a yearly pattern). Cache it per entry per fire cycle
+        // so a tick pays it once instead of once per due entry per tick.
+        var interval = entry.IntervalEstimate ??= ComputeInterval(entry, now);
         var half = interval / 2;
         if (half < TimeSpan.FromSeconds(60))
             return TimeSpan.FromSeconds(60);
         if (half > TimeSpan.FromHours(2))
             return TimeSpan.FromHours(2);
         return half;
+    }
+
+    private TimeSpan ComputeInterval(JobEntry entry, DateTimeOffset now)
+    {
+        GraceIntervalComputations++;
+        return entry.Cron.EstimateInterval(now, entry.Tz);
     }
 
     private void FastForward(JobEntry entry, DateTimeOffset now)
@@ -424,6 +474,7 @@ public sealed class Scheduler
         {
             RemoveFromSlot(idx.Slot, entry);
             entry.NextFireUtc = next;
+            entry.IntervalEstimate = null; // new fire cycle — recompute lazily
             var slot = SlotOf(next);
             AddToSlot(slot, entry);
             _byJobId[entry.JobId] = (slot, entry);
@@ -439,6 +490,7 @@ public sealed class Scheduler
             RemoveFromSlot(idx.Slot, entry);
             entry.NextFireUtc = next;
             entry.LastTriggeredUtc = now;
+            entry.IntervalEstimate = null; // new fire cycle — recompute lazily
             var slot = SlotOf(next);
             AddToSlot(slot, entry);
             _byJobId[entry.JobId] = (slot, entry);
@@ -485,6 +537,16 @@ public sealed class Scheduler
     /// work. Verifies the loop's catch-all (review R4-1) — a transient flush
     /// failure must never kill the scheduler thread.</summary>
     internal volatile bool BombFlushNextTick;
+
+    /// <summary>TEST HOOK — cumulative count of grace interval estimates that were
+    /// actually computed. Contract: one estimate per job entry per fire cycle,
+    /// never one per tick (the 10k scale-test budget depends on it).</summary>
+    internal long GraceIntervalComputations;
+
+    /// <summary>TEST HOOK — cumulative count of wheel keys visited by due-slot
+    /// scans. Contract: due slots plus the first future slot that stops the scan
+    /// (README: "flush touches only due slots").</summary>
+    internal long WheelSlotsExamined;
 
     private async Task RunLoopAsync(CancellationToken ct)
     {

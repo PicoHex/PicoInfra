@@ -20,6 +20,11 @@ internal sealed class JobEntry
     public int ConsecutiveFailures { get; set; }
     public string? LastError { get; set; }
 
+    /// <summary>Cached <c>EstimateInterval</c> for the CURRENT fire cycle — set on
+    /// first grace judgment, cleared whenever next-fire moves (advance, fast-forward,
+    /// resume, reschedule). Keeps the estimate out of the per-tick hot path.</summary>
+    public TimeSpan? IntervalEstimate { get; set; }
+
     public JobSnapshot ToSnapshot(string expressionText) =>
         new(
             JobId,

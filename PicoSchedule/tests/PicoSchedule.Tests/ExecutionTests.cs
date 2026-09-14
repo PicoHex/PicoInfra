@@ -56,6 +56,10 @@ public sealed class ExecutionTests
         await Assert.That(gated.Calls).IsEqualTo(1); // skipped — no concurrent fire
 
         gated.ReleaseAll(); // release pulse 1
+        // FlushNowAsync drains in-flight callbacks — deterministically wait for
+        // pulse 1 to finish instead of sleeping (a fixed delay flakes under
+        // full-suite parallel load). Nothing is due at 00:02:30 after the skip.
+        await s.FlushNowAsync();
         clock.Advance(TimeSpan.FromSeconds(60)); // 00:03:30 — pulse 3 due, nothing in flight
         await s.FlushNowAsync();
         await Assert.That(gated.Calls).IsEqualTo(2); // fires again after the release

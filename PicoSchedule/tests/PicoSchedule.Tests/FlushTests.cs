@@ -62,6 +62,22 @@ public sealed class FlushTests
         ) => throw new InvalidOperationException("boom");
     }
 
+    private sealed class CancellationAwareSink : ITriggerSink
+    {
+        public ValueTask FireAsync(
+            Guid jobId,
+            DateTimeOffset dueUtc,
+            IReadOnlyDictionary<string, string?> payload,
+            CancellationToken ct
+        )
+        {
+            // An in-flight sink observing shutdown cancellation — expected
+            // during StopAsync, NOT a job failure.
+            ct.ThrowIfCancellationRequested();
+            return default;
+        }
+    }
+
     private static (Scheduler S, FakeClock Clock, CaptureSink Sink) NewHost(int burstLimit = 50)
     {
         var clock = new FakeClock(Start);
@@ -220,6 +236,22 @@ public sealed class FlushTests
         await s.FlushNowAsync();
         await Assert.That(sink.Calls).IsEqualTo(0); // stub left the wheel
         await Assert.That(s.Snapshot[0].Enabled).IsFalse();
+    }
+
+    [Test]
+    public async Task Flush_ShutdownCancellation_IsNotRecordedAsFailure()
+    {
+        var (s, clock, _) = NewHost();
+        var id = Guid.CreateVersion7();
+        s.Register(id, "0 9 * * *", new CancellationAwareSink(), null, Utc);
+
+        clock.Advance(TimeSpan.FromHours(9));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await s.FlushNowAsync(clock.UtcNow, cts.Token);
+
+        await Assert.That(s.Snapshot[0].ConsecutiveFailures).IsEqualTo(0);
+        await Assert.That(s.Snapshot[0].LastError).IsNull();
     }
 
     [Test]

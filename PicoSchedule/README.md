@@ -15,7 +15,8 @@ scheduler built around a timing wheel with a complete cron dialect.
   persistence code carries its own AOT responsibility.
 - **Timing wheel** — absolute UTC-minute slots (`SortedDictionary`), no ring
   overflow, no hierarchy: weekly/monthly/yearly patterns are plain keys.
-  Registration and slot moves are O(log N); flush touches only due slots.
+  Slot moves are O(log N); the flush scan stops at the first future slot, and
+  the grace interval is estimated once per entry per fire cycle (cached).
 
 ## Quick Start
 

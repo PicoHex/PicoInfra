@@ -16,7 +16,7 @@
 
   <!-- Zero PackageReference by design (framework spec §1/§2) -->
   <ItemGroup>
+    <InternalsVisibleTo Include="PicoSchedule.Tests" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
-
 </Project>

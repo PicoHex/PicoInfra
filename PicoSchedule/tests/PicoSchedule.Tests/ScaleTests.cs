@@ -2,6 +2,10 @@ using System.Diagnostics;
 
 namespace PicoSchedule.Tests;
 
+/// <summary>Wall-clock budget tests — run in isolation so parallel test load
+/// cannot distort the measurements (the budgets encode the algorithmic
+/// contracts asserted deterministically in PerformanceContractTests).</summary>
+[NotInParallel]
 public sealed class ScaleTests
 {
     private static readonly DateTimeOffset Start = new(2026, 9, 10, 0, 0, 0, TimeSpan.Zero);
