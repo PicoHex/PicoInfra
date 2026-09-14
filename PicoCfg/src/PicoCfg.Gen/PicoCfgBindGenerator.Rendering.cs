@@ -445,6 +445,12 @@ public sealed partial class PicoCfgBindGenerator
     /// (<see cref="AppendBindProperty"/>) and the init-only inline path
     /// (<see cref="AppendInlinePropertyValues"/>).
     /// </summary>
+    /// <param name="sb">Code-emission buffer for the generated binding body.</param>
+    /// <param name="target">The type being bound (used for nested construction).</param>
+    /// <param name="property">Property model being emitted.</param>
+    /// <param name="throwOnFailure">
+    /// Whether a failed conversion throws (Bind path) or sets the failure flag (TryBind path).
+    /// </param>
     /// <param name="assignmentLeft">
     /// Left-hand side of the assignment, e.g. "instance.Name" (BindInto)
     /// or "__value_Name" (inline).
@@ -769,6 +775,11 @@ public sealed partial class PicoCfgBindGenerator
     /// (<see cref="AppendCollectionBindProperty"/>) and the init-only
     /// inline path (<see cref="AppendCollectionInlineValue"/>).
     /// </summary>
+    /// <param name="sb">Code-emission buffer for the generated collection loop.</param>
+    /// <param name="property">Collection property model being emitted.</param>
+    /// <param name="throwOnFailure">
+    /// Whether a failed element conversion throws (Bind path) or sets the failure flag (TryBind path).
+    /// </param>
     /// <param name="assignmentLeft">
     /// Left-hand side of the final assignment, e.g. "instance.Providers"
     /// (BindInto) or "__value_Providers" (inline).

@@ -8,8 +8,7 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)/Generated</CompilerGeneratedFilesOutputPath>
     <RootNamespace>PicoAop.Sample</RootNamespace>
-    <PublishAot>true</PublishAot>
-    <TrimMode>full</TrimMode>
+    <AotOptimizationLevel>aggressive</AotOptimizationLevel>
   </PropertyGroup>
 
   <ItemGroup>

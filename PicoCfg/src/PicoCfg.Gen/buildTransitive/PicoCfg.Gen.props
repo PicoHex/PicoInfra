@@ -1,5 +1,0 @@
-<Project>
-  <ItemGroup>
-    <Analyzer Include="$(MSBuildThisFileDirectory)PicoCfg.Gen\analyzers\dotnet\cs\PicoCfg.Gen.dll" />
-  </ItemGroup>
-</Project>

@@ -7,7 +7,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>PicoAop.Abs</PackageId>
     <Description>Abstractions for PicoAop — compile-time AOP interceptors for PicoDI</Description>
-    <PackageTags>PicoHex;AOP;DI;Interceptor;Abstractions</PackageTags>
+    <PackageTags>PicoHex;AOP;AOT;DI;Interceptor;Abstractions</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDependencyFile>false</GenerateDependencyFile>
   </PropertyGroup>
@@ -47,5 +47,4 @@
       Visible="false"
     />
   </ItemGroup>
-
 </Project>

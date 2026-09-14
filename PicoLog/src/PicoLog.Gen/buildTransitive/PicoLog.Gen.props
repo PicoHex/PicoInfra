@@ -1,5 +1,0 @@
-<Project>
-  <ItemGroup>
-    <Analyzer Include="$(MSBuildThisFileDirectory)PicoLog.Gen\analyzers\dotnet\cs\PicoLog.Gen.dll" />
-  </ItemGroup>
-</Project>

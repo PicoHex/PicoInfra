@@ -14,8 +14,6 @@
       -p:UseProjectReferences=false to validate and emit real NuGet dependencies.
     -->
     <UseProjectReferences Condition="'$(UseProjectReferences)' == ''">true</UseProjectReferences>
-    <PicoDiPackageVersion Condition="'$(PicoDiPackageVersion)' == ''"
-      >$(Version)</PicoDiPackageVersion>
   </PropertyGroup>
 
   <!-- ===== AOT Strategy ===== -->

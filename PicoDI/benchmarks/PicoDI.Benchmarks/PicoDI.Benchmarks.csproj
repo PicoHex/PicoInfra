@@ -27,8 +27,6 @@
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
 
-    <IlcGeneratePdb>false</IlcGeneratePdb>
-
     <!-- Used by PicoDiBenchmarks_CleanupPublishArtifacts to remove late-copied NativeAOT PDBs -->
     <PicoDiDeletePdbAfterPublish>true</PicoDiDeletePdbAfterPublish>
   </PropertyGroup>

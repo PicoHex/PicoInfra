@@ -7,7 +7,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>PicoMediator.Abs</PackageId>
     <Description>Abstractions for PicoMediator — compile-time command/event dispatch</Description>
-    <PackageTags>PicoHex;Mediator;Messaging;Abstractions</PackageTags>
+    <PackageTags>PicoHex;Mediator;AOT;Messaging;Abstractions</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDependencyFile>false</GenerateDependencyFile>
   </PropertyGroup>

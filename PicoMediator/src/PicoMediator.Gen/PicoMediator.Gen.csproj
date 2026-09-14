@@ -9,12 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <NoWarn>$(NoWarn);RS2008;RS1041;NU5128</NoWarn>
     <IsPackable>false</IsPackable>
-    <DevelopmentDependency>false</DevelopmentDependency>
-    <IncludeBuildOutput>false</IncludeBuildOutput>
-    <PackageId>PicoMediator.Gen</PackageId>
     <Description>Source generator for PicoMediator — generates AOT-compatible request dispatch at compile time</Description>
-    <PackageTags>PicoHex;Mediator;AOT;Source Generator;Roslyn;Analyzer</PackageTags>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -25,25 +20,6 @@
   <PropertyGroup>
     <MSBuildWarningsAsMessages>MSB3026</MSBuildWarningsAsMessages>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="..\..\README.md" Pack="true" PackagePath="" Visible="false" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None
-      Include="$(OutputPath)/$(AssemblyName).dll"
-      Pack="true"
-      PackagePath="buildTransitive/PicoMediator.Gen/analyzers/dotnet/cs"
-      Visible="false"
-    />
-    <None
-      Include="buildTransitive\PicoMediator.Gen.props"
-      Pack="true"
-      PackagePath="buildTransitive/PicoMediator.Gen.props"
-      Visible="false"
-    />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
