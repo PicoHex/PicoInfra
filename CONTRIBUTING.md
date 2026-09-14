@@ -28,7 +28,7 @@ dotnet test PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj
 dotnet test PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj
 ```
 
-Or run all tests at once:
+Or run all tests at once (slower; CI runs per project instead):
 
 ```shell
 dotnet test PicoInfra.slnx
@@ -36,17 +36,30 @@ dotnet test PicoInfra.slnx
 
 ### Testing-Platform 2.x flakiness ("Zero tests ran")
 
-On some machines, `dotnet test` against Microsoft Testing Platform 2.x is
-unreliable: the first run may report `Zero tests ran` (exit code 5/8) or hang
-because stale `testhost.exe` processes hold file locks on freshly built
-dlls. If you see this:
+`dotnet test` against Microsoft Testing Platform 2.x can report
+`Zero tests ran` (exit code 5/8) or hang. Two verified causes:
+
+1. **Do not pass `--nologo` to `dotnet test`** on .NET 10 SDK (10.0.400 verified):
+   the new test experience reports `Zero tests ran` for every project when
+   `--nologo` is present. Use `--no-progress` (or `-v q`) instead — CI does not
+   pass `--nologo`.
+2. Stale `testhost.exe` processes holding file locks on freshly built dlls.
+
+Preferred per-project run (mirrors CI exactly):
 
 ```shell
-# 1. Clear stale test hosts holding file locks (Windows)
+dotnet build PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -c Release
+dotnet test PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -c Release --no-build --no-progress
+```
+
+If the runner still misbehaves:
+
+```shell
+# Clear stale test hosts holding file locks (Windows)
 taskkill //F //IM testhost.exe
 
-# 2. Run the test project directly through its executable. The repo defaults
-#    to PublishAot=true, so explicitly disable AOT for a managed test run:
+# Run the test project directly through its executable. The repo defaults
+# to PublishAot=true, so explicitly disable AOT for a managed test run:
 dotnet run --project PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -c Release -p:PublishAot=false
 ```
 
@@ -86,11 +99,15 @@ This project uses the following C# conventions:
 - **No reflection**: Use source generators or factory delegates instead of `Activator.CreateInstance`, `Expression`, or runtime emit.
 - **XML docs**: Public APIs must have XML doc comments. Internal and private APIs should have them where helpful.
 
-Run `dotnet format` before committing to catch style issues automatically:
+Run CSharpier (the repo formatter, pinned in `.config/dotnet-tools.json`) before committing:
 
 ```shell
-dotnet format PicoInfra.slnx --verbosity normal
+dotnet tool restore
+dotnet csharpier check .              # report unformatted files
+dotnet csharpier format .             # fix them
 ```
+
+The pre-commit hook (`scripts/install-hooks.sh`) formats staged `.cs` files automatically; CI enforces `dotnet csharpier check .` in the `Format` job.
 
 ## AOT Testing Guide
 

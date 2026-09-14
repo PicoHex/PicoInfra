@@ -88,6 +88,28 @@ jobs:
               - 'global.json'
 
   # ---------------------------------------------------------------------------
+  # Formatting — repo-wide, no path filter: cheap and catches every PR
+  # ---------------------------------------------------------------------------
+  format:
+    name: Format (CSharpier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Check formatting
+        run: dotnet csharpier check .
+
+  # ---------------------------------------------------------------------------
   # PicoDI
   # ---------------------------------------------------------------------------
   validate-picodi:
