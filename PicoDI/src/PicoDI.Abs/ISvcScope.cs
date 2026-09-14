@@ -38,7 +38,7 @@ public interface ISvcScope : IAsyncDisposable
     /// <returns><see langword="true"/> if the service was resolved; otherwise, <see langword="false"/>.</returns>
     public bool TryGetService(
         Type serviceType,
-        [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out object? service
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out object? service
     );
 
     /// <summary>
@@ -49,7 +49,7 @@ public interface ISvcScope : IAsyncDisposable
     /// <returns><see langword="true"/> if the service type is registered; otherwise, <see langword="false"/>.</returns>
     public bool TryGetServices(
         Type serviceType,
-        [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out IReadOnlyList<object>? services
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IReadOnlyList<object>? services
     );
 }
 

@@ -2,8 +2,8 @@ namespace PicoDI.Abs;
 
 /// <summary>
 /// Compile-time registry of hosted service types.
-/// Populated by PicoDI.Gen source generator and
-/// <see cref="SvcContainerHostingExtensions.RegisterHostedSvc{THostedSvc}()"/>.
+/// Populated by PicoDI.Gen source generator and the <c>RegisterHostedSvc</c>
+/// extension methods on <see cref="SvcContainerHostingExtensions"/>.
 /// </summary>
 /// <remarks>
 /// The registry is a process-wide static that is written during registration

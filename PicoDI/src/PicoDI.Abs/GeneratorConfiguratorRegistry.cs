@@ -64,7 +64,7 @@ public static class GeneratorConfiguratorRegistry
 
         // Bookkeeping under the lock; configurators run OUTSIDE it (loader-lock
         // deadlock regression, see class remarks).
-        Action<ISvcContainer>[] snapshot;
+        Action<ISvcContainer>[]? snapshot;
         lock (RegistryLock)
         {
             if (Applied.TryGetValue(container, out _))

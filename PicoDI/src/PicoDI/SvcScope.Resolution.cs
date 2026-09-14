@@ -54,7 +54,7 @@ public sealed partial class SvcScope
         ResolveServiceCore(serviceType) ?? HandleServiceNotFound(serviceType);
 
     /// <inheritdoc />
-    public bool TryGetService(Type serviceType, [MaybeNullWhen(false)] out object? service)
+    public bool TryGetService(Type serviceType, [NotNullWhen(true)] out object? service)
     {
         service = ResolveServiceCore(serviceType);
         return service is not null;
@@ -78,7 +78,7 @@ public sealed partial class SvcScope
     /// <inheritdoc />
     public bool TryGetServices(
         Type serviceType,
-        [MaybeNullWhen(false)] out IReadOnlyList<object> services
+        [NotNullWhen(true)] out IReadOnlyList<object>? services
     )
     {
         services = ResolveServicesCore(serviceType);
