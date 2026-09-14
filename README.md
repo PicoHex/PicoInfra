@@ -17,12 +17,14 @@ PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries th
 
 | Module | Role | Packages |
 |---|---|---|
-| **PicoDI** | Dependency Injection | `PicoDI` `PicoDI.Abs` `PicoDI.Gen` |
-| **PicoCfg** | Configuration | `PicoCfg` `PicoCfg.Abs` `PicoCfg.Gen` `PicoCfg.*` |
-| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` `PicoLog.Gen` |
-| **PicoAop** | AOT Interception (AOP) | `PicoAop.Abs` `PicoAop.Gen` `PicoAop.DI` |
-| **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` `PicoMediator.Gen` |
+| **PicoDI** | Dependency Injection | `PicoDI` `PicoDI.Abs` |
+| **PicoCfg** | Configuration | `PicoCfg` `PicoCfg.Abs` `PicoCfg.*` |
+| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` |
+| **PicoAop** | AOT Interception (AOP) | `PicoAop.Abs` `PicoAop.DI` |
+| **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` |
 | **PicoSchedule** | Embedded AOT Scheduling (cron) | `PicoSchedule` |
+
+> Source generators (`PicoDI.Gen`, `PicoAop.Gen`, `PicoCfg.Gen`, `PicoLog.Gen`, `PicoMediator.Gen`) are **embedded inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated). The standalone `*.Gen` packages are **no longer published** — NuGet only carries legacy versions (≤ 2026.6.0); installing one is unnecessary and may add a stale duplicate analyzer.
 
 Each module is **independent** — use one, some, or all. DI integration packages (`PicoCfg.DI`, `PicoLog.DI`, `PicoMediator.DI`, `PicoAop.DI`) bridge modules into the container.
 
@@ -35,7 +37,7 @@ Each module is **independent** — use one, some, or all. DI integration package
 | **Runtime reflection** | Heavy (`Activator.CreateInstance`, expression trees) | **Zero** — all code paths are source-generated |
 | **Native AOT readiness** | Requires careful opt-in, trimming annotations, reflection-free config | **AOT First** — compiles natively out of the box |
 | **HostBuilder ceremony** | Required (`Host.CreateDefaultBuilder(args)` + pipeline) | **None** — `new SvcContainer()` is all you need |
-| **Package count** | Proliferating (`Microsoft.Extensions.*` ≥ 20+ packages) | Minimal (15 packages, composable) |
+| **Package count** | Proliferating (`Microsoft.Extensions.*` ≥ 20+ packages) | Minimal (20 packages, composable) |
 | **Module wiring** | Runtime `IServiceCollection` scanning | Compile-time via `ModuleInitializer` + source generators |
 | **Binary size** | Large (reflection fallbacks, expression compiler) | Minimal (trimmable, linker-friendly) |
 | **Cold start** | Fast (JIT) | **Fast** (pre-generated code paths, no warm-up) |
@@ -284,9 +286,45 @@ var user = await mediator.Send<GetUser, User>(new GetUser(1));
 
 ---
 
+### PicoSchedule — Embedded AOT Scheduling
+
+```shell
+dotnet add package PicoSchedule
+```
+
+Zero-dependency in-memory scheduler built around a timing wheel, with the full cron dialect and misfire/burst/failure governance.
+
+```csharp
+var scheduler = new Scheduler(new SchedulerOptions { TickInterval = TimeSpan.FromSeconds(10) });
+scheduler.Start();
+
+scheduler.Register(
+    Guid.CreateVersion7(),
+    "0 9 * * MON",                     // full cron dialect (names, L, W, N#K, @daily, ...)
+    new MyTriggerSink(),
+    new Dictionary<string, string?> { ["prompt"] = "morning report" }
+);
+
+// ... at shutdown:
+await scheduler.StopAsync();
+```
+
+**Architecture from source:**
+
+- **Compiled cron (`CronPattern`)** — 5- or 6-field (seconds) dialect: `*`, `*/n`, `a-b`, `a,b`, `?`, dow `N#K`, `L` / `NL`, dom `Nw`, name aliases, `@hourly`…`@yearly`
+- **Timing wheel (`Scheduler`)** — absolute UTC-minute slots; O(log N) slot moves; the grace interval is estimated once per entry per fire cycle and cached, and the flush scan stops at the first future slot
+- **Misfire policy** — `GraceMode.HalfPeriodClamped` (default: half the estimated period, clamped 60s..2h) / `Fixed` / `Disabled`; beyond grace the slot fast-forwards, never replays
+- **Burst limit** — `BurstLimit` (default 50) per flush; the excess stays overdue and keeps competing on the next tick
+- **Execution** — sinks run outside the loop; per-job serial + skip-if-busy; cross-job parallelism allowed (sink thread-safety is the host's concern)
+- **Failure handling** — fire once, log, count consecutive failures; auto-pause at `MaxConsecutiveFailures` (`Resume` retries)
+- **Lifecycle** — one-shot (`Start` once, `StopAsync` once); `Snapshot` is a non-blocking CQS read
+- **Zero dependencies, zero reflection** — `IsAotCompatible` + `IsTrimmable`
+
+---
+
 ## Source Generator Architecture
 
-Every PicoInfra module uses `IIncrementalGenerator` for caching, incremental builds, and fast IDE experience.
+Every PicoInfra module uses `IIncrementalGenerator` for caching, incremental builds, and fast IDE experience. All generators ship **embedded in the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated) — the `*.Gen` names below are generator projects, not separately installable packages.
 
 | Generator | Input | Output |
 |---|---|---|
@@ -390,18 +428,18 @@ var mediator = scope.GetService<IMediator>();
 
 ## Package Reference
 
+> Source generators ship **inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated) — no extra reference is needed. The standalone `*.Gen` packages are **no longer published** (legacy versions up to 2026.6.0 remain on NuGet — do not install them).
+
 ### DI
 | Package | Description |
 |---|---|
 | **PicoDI** | Zero-reflection DI container |
-| **PicoDI.Abs** | Abstractions (`ISvcContainer`, `ISvcScope`, `SvcDescriptor`) |
-| **PicoDI.Gen** | Compile-time registration source generator + open generic materialization |
+| **PicoDI.Abs** | Abstractions (`ISvcContainer`, `ISvcScope`, `SvcDescriptor`) + embedded registration generator |
 
 ### AOP
 | Package | Description |
 |---|---|
-| **PicoAop.Abs** | AOT-first interceptor abstractions — `IInterceptor`, `IInvocation`, `InterceptorBase` |
-| **PicoAop.Gen** | Compile-time invocation struct + proxy class generation |
+| **PicoAop.Abs** | AOT-first interceptor abstractions — `IInterceptor`, `IInvocation`, `InterceptorBase` + embedded proxy generator |
 | **PicoAop.DI** | DI integration — `.InterceptBy<T>()`, `.AddInterceptor<T>()`, `.WithoutInterceptor<T>()`, `.WithoutInterceptors()` |
 
 ### Configuration
@@ -409,8 +447,7 @@ var mediator = scope.GetService<IMediator>();
 |---|---|
 | **PicoCfg** | Async-first configuration root, builder, providers (env, cmd-line, stream, dictionary, key-per-file) |
 | **PicoCfg.Abs** | Configuration abstractions (`ICfg`, `ICfgRoot`, `ICfgSource`, `ICfgProvider`, `ICfgSnapshot`) |
-| **PicoCfg.Gen** | Typed binding source generator (`Bind<T>`, `TryBind<T>`, `BindInto<T>`) |
-| **PicoCfg.DI** | DI integration — `RegisterCfgRoot()`, `RegisterCfgTransient<T>()`, `ICfgOptions<T>` |
+| **PicoCfg.DI** | DI integration — `RegisterCfgRoot()`, `RegisterCfgTransient<T>()`, `ICfgOptions<T>` + embedded typed-binding generator |
 | **PicoCfg.Json** | JSON configuration source |
 | **PicoCfg.Yaml** | YAML configuration source |
 | **PicoCfg.Ini** | INI configuration source |
@@ -420,8 +457,7 @@ var mediator = scope.GetService<IMediator>();
 | Package | Description |
 |---|---|
 | **PicoLog** | Structured logging with sinks (console, colored-console, file, Seq) |
-| **PicoLog.Abs** | Logging abstractions (`ILogger`, `ILoggerFactory`, `ILogSink`, `ILogFormatter`, `LogEntry`, `LogLevel`) |
-| **PicoLog.Gen** | `[PicoLogMessage]` source generator — typed logging extension methods |
+| **PicoLog.Abs** | Logging abstractions (`ILogger`, `ILoggerFactory`, `ILogSink`, `ILogFormatter`, `LogEntry`, `LogLevel`) + embedded `[PicoLogMessage]` generator |
 | **PicoLog.DI** | DI integration — `AddPicoLog(Action<LoggingOptions>)` |
 | **PicoLog.Json** | JSON log formatting |
 
@@ -429,9 +465,13 @@ var mediator = scope.GetService<IMediator>();
 | Package | Description |
 |---|---|
 | **PicoMediator** | Compile-time command/event dispatch |
-| **PicoMediator.Abs** | Abstractions (`IMediator`, `IRequester`, `IPublisher`, `ICommand<T>`, `IEvent`, handler interfaces) |
-| **PicoMediator.Gen** | Handler → switch dispatch source generator |
+| **PicoMediator.Abs** | Abstractions (`IMediator`, `IRequester`, `IPublisher`, `ICommand<T>`, `IEvent`, handler interfaces) + embedded dispatch generator |
 | **PicoMediator.DI** | DI integration — `AddPicoMediator()` |
+
+### Scheduling
+| Package | Description |
+|---|---|
+| **PicoSchedule** | Zero-dependency embedded timing-wheel scheduler (full cron dialect, AOT-first) |
 
 ---
 
@@ -454,8 +494,9 @@ var mediator = scope.GetService<IMediator>();
 - **`Directory.Packages.props`** — Central package version management
 - **AOT levels:**
   - `minimal` — `PublishAot=true`, `TrimMode=full` (default for tests)
-  - `aggressive` — Full trimming, `IlcDisableReflection=true`, `IlcOptimizationPreference=Size` (samples & benchmarks)
-- **`netstandard2.0`** — Explicitly blocked from AOT; sources target `net10.0` (main) and `netstandard2.0` (abstractions only)
+  - `aggressive` — adds `StackTraceSupport=false` + `UseSystemResourceKeys=true` (samples & benchmarks)
+  - The classic `Ilc*` MSBuild properties (`IlcDisableReflection`, `IlcOptimizationPreference`, …) were removed in .NET 10 SDK (≥ 10.0.400) and are silently ignored — the tiers use the supported replacements above
+- **`netstandard2.0`** — Explicitly blocked from AOT; sources target `net10.0` (runtime + Abs) and `netstandard2.0` (source generators only — Roslyn loader compatibility)
 
 ---
 
@@ -466,6 +507,7 @@ var mediator = scope.GetService<IMediator>();
 - [PicoCfg](PicoCfg/README.md) — Configuration providers, binding, file watching
 - [PicoLog](PicoLog/README.md) — Structured logging, sinks, message templates
 - [PicoMediator](PicoMediator/README.md) — Command/event dispatch
+- [PicoSchedule](PicoSchedule/README.md) — Embedded timing-wheel scheduler (cron)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
@@ -473,13 +515,14 @@ var mediator = scope.GetService<IMediator>();
 
 ## Benchmarks
 
-Each module ships its own benchmarks under `*/benchmarks/`. Key results:
+Benchmark suites live under `*/benchmarks/` (PicoDI, PicoCfg, PicoLog, PicoAop, PicoMediator — PicoSchedule has none yet). They compare against `Microsoft.Extensions.*` baselines where applicable:
 
-- **PicoDI**: Singleton resolution ~2ns (single) / ~20ns (multi), scope creation ~150ns
-- **PicoCfg**: Config source build ~1μs (inline), value lookup ~50ns
-- **PicoLog**: Fast-path log dispatch ~100ns per entry (all `IFastLogSink`)
-- **PicoAop**: Intercepted method call overhead ~5ns (struct invocation, no allocation)
-- **PicoMediator**: Send dispatch ~30ns (generated switch) / ~80ns (DI fallback)
+```shell
+dotnet run -c Release --project PicoDI/benchmarks/PicoDI.Benchmarks
+# the same pattern for the other modules (PicoLog also accepts `-- main` / `-- wait`)
+```
+
+Results are written next to the benchmark binary (`benchmark-results.md` / `.csv`) and are **not committed** — run the suites on your target hardware and OS for current numbers. Samples and benchmarks build with the `aggressive` AOT tier (production-configuration preview).
 
 ---
 

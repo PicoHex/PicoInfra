@@ -1,5 +1,16 @@
 # PicoHex Monorepo — Bug Report
 
+> **Status (2026-09-14, HEAD `2a5bbe2`) — resolved:** every code finding in this
+> report was verified fixed on `main`: BUG-1 (solution builds; PicoAop.Benchmarks
+> compiles), BUG-2 (all four samples run managed — PicoDI, PicoDI.Sample.Host,
+> PicoLog, PicoAop; CI additionally executes the published AOT binaries for
+> PicoAop/PicoMediator/PicoSchedule), BUG-3 (`FileSink` seeds the rotation index
+> from disk, `overwrite:false`, cleanup failures recorded via `PicoLogMetrics`),
+> BUG-4 (no CS1574 in PicoCfg builds), BUG-5 (workaround documented in
+> CONTRIBUTING.md). The report is kept as a historical record — the "Verified
+> healthy" test counts and warning numbers below are from the 2026-08-16 commit,
+> not current.
+
 - **Repository**: PicoHex/PicoInfra (`D:/MyProjects/PicoHex/PicoInfra`)
 - **Commit**: `e9ed4f8` — "build: update all NuGet packages to latest stable" (HEAD, 2026-08-13)
 - **Environment**: Windows x64, .NET SDK `10.0.301`, net10.0, `PublishAot=true` (repo default), Release config
@@ -242,6 +253,22 @@ dotnet run --project <test-project> -c Release -p:PublishAot=false
 ### Impact
 
 Low — environment-level, not a code defect; but new contributors hitting "Zero tests ran" will chase ghosts. Consider pinning/documenting the working invocation in CONTRIBUTING.md.
+
+### Update (2026-09-14, MTP 2.3.3 + SDK 10.0.400)
+
+The dominant **reproducible** cause of `Zero tests ran` on the current toolchain is
+passing `--nologo` to `dotnet test`: under the .NET 10 SDK's new test experience
+it reports zero tests for **every** project (verified with and without `--nologo`:
+0 vs 941 tests). Do not pass `--nologo`; use `--no-progress`. The verified green
+invocation (mirrors CI, per project) is:
+
+```powershell
+dotnet build <test-project> -c Release
+dotnet test <test-project> -c Release --no-build --no-progress
+```
+
+With that invocation the full suite is 941/941 (2026-09-14). CONTRIBUTING.md now
+documents both this and the stale-`testhost.exe` hygiene step.
 
 ---
 

@@ -162,11 +162,7 @@ logger.Info(new EventId(1001, "OrderPlaced"), $"Order {orderId} placed");
 
 ## Source-Generated Messages
 
-Add `PicoLog.Gen` as an analyzer to enable compile-time message generation:
-
-```xml
-<PackageReference Include="PicoLog.Gen" PrivateAssets="all" />
-```
+The `[PicoLogMessage]` generator is **embedded in `PicoLog.Abs`** (no extra package). Reference `PicoLog.Abs` and the analyzer activates automatically:
 
 ```csharp
 public static partial class AppLogs
@@ -410,8 +406,8 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 | Package | TFM | Description |
 |---|---|---|
 | **PicoLog** | net10.0 | Logging runtime: `LoggerFactory`, sinks, formatters |
-| **PicoLog.Abs** | netstandard2.0 | `ILogger`, `ILogSink`, `LogLevel`, `LogEntry`, `EventId` |
-| **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator |
+| **PicoLog.Abs** | net10.0 | `ILogger`, `ILogSink`, `LogLevel`, `LogEntry`, `EventId` |
+| **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator (embedded in `PicoLog.Abs`; not a standalone package) |
 | **PicoLog.DI** | net10.0 | DI integration (`AddPicoLog`, `WriteTo`, `ReadFrom`) |
 
 [← Back to PicoInfra](../README.md)

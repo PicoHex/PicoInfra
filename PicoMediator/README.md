@@ -4,8 +4,9 @@ Compile-time command/event dispatch for PicoDI. Zero reflection, AOT-first.
 
 > **Requirements: .NET 10+** — the `PicoMediator` runtime and ALL generated code
 > (dispatch switches, handler registrations, base-type bridges) require net10.0+
-> consumers. `PicoMediator.Abs` alone targets netstandard2.0 but provides no
-> runtime; the source generator is unusable from netstandard2.0 assemblies.
+> consumers. `PicoMediator.Abs` targets net10.0; only the `PicoMediator.Gen`
+> analyzer stays on netstandard2.0 (Roslyn loader compatibility) and it ships
+> embedded in `PicoMediator.Abs`.
 
 ## Quick Start
 
@@ -138,7 +139,7 @@ PicoMediator.Gen scans all closed, non-abstract `ICommandHandler<T, R>` / `ISubs
 container.AddPicoMediator(); // auto-registers all scanned handlers
 ```
 
-- **Multi-assembly:** handlers in referenced library assemblies are included — every assembly that references `PicoMediator.Gen` contributes its own scanned handlers, and `AddPicoMediator()` applies configurators from all loaded assemblies (the "library of handlers" pattern).
+- **Multi-assembly:** handlers in referenced library assemblies are included — every assembly that references `PicoMediator.Abs` (which embeds the `PicoMediator.Gen` analyzer) contributes its own scanned handlers, and `AddPicoMediator()` applies configurators from all loaded assemblies (the "library of handlers" pattern).
 - Constructor dependencies are resolved from the container (typed, zero reflection).
 - One class implementing several handler interfaces yields one registration per interface.
 - Open-generic handler classes are skipped (register closed forms manually).
@@ -219,11 +220,7 @@ container.Register<ICommandHandler<CreateOrder, OrderResult>, CreateOrderHandler
 
 ## Source Generator (PicoMediator.Gen)
 
-Add `PicoMediator.Gen` as an analyzer:
-
-```xml
-<PackageReference Include="PicoMediator.Gen" PrivateAssets="all" />
-```
+The generator is **embedded in `PicoMediator.Abs`** (no extra package) — reference `PicoMediator.Abs` and it activates automatically.
 
 The generator scans `ICommandHandler<T, R>` / `ISubscriber<T>` implementations and emits:
 
@@ -249,7 +246,7 @@ Without the generator, `Mediator.Send()` still works via the runtime `GetService
 |---|---|
 | **PicoMediator.Abs** | `IMessage`, `ICommand<T>`, `IEvent`, `ICommandHandler<T, T>`, `ISubscriber<T>`, `IRequester`, `IPublisher`, `IMediator` |
 | **PicoMediator** | `Mediator(ISvcScope)` runtime, `GeneratedDispatch`, `MediatorAutoSubscriptionRegistry` |
-| **PicoMediator.Gen** | Source generator — switch dispatch + handler registrations |
+| **PicoMediator.Gen** | Source generator — switch dispatch + handler registrations (embedded in `PicoMediator.Abs`) |
 | **PicoMediator.DI** | `container.AddPicoMediator()` |
 
 [← Back to PicoInfra](../README.md)

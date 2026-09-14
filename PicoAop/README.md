@@ -176,7 +176,7 @@ container.Register<IHealthCheck, HealthCheck>()
 | Package | Description |
 |---|---|
 | **PicoAop.Abs** | `IInterceptor`, `IInvocation<TResult>`, `InterceptorBase` |
-| **PicoAop.Gen** | Roslyn source generator — emits decorator classes |
+| **PicoAop.Gen** | Roslyn source generator — emits decorator classes (embedded in `PicoAop.Abs`) |
 | **PicoAop.DI** | DI extensions: `InterceptBy<T>()`, `AddInterceptor<T>()` |
 
 ## Thread Safety

@@ -62,11 +62,11 @@ container.Register(typeof(MyService), SvcLifetime.Transient);
 > They record the type mapping in the container but do not provide a factory — pair with a factory
 > registration or the source generator for actual instance creation.
 
-### Type-Based via Generic Type Parameters (requires PicoDI.Gen)
+### Type-Based via Generic Type Parameters (uses the embedded PicoDI.Gen analyzer)
 
 ```csharp
 // These compile to zero-allocation factory delegates
-// Requires PicoDI.Gen (embedded in PicoDI.Abs — available automatically)
+// The PicoDI.Gen analyzer ships embedded in PicoDI.Abs — available automatically
 container.RegisterSingleton<IService, Service>();
 container.RegisterScoped<IRepository, SqlRepository>();
 container.RegisterTransient<IValidator, EmailValidator>();

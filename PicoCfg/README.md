@@ -106,7 +106,7 @@ _ = Task.Run(async () =>
 
 ## Source-Generated Binding
 
-Add `PicoCfg.Gen` as an analyzer. Call `CfgBind.Bind<T>` — the generator emits binding delegates at compile time.
+The source generator is **embedded in `PicoCfg.Abs`** (no extra package). Call `CfgBind.Bind<T>` — the generator emits binding delegates at compile time.
 
 ```csharp
 using PicoCfg;
@@ -197,7 +197,7 @@ container.RegisterCfgOptionsScoped<AppSettings>();     // ICfgOptions<T> snapsho
 |---|---|
 | **PicoCfg** | Configuration runtime |
 | **PicoCfg.Abs** | `ICfg`, `ICfgRoot`, `ICfgSection`, `ICfgOptions<T>` |
-| **PicoCfg.Gen** | `CfgBind.Bind<T>` source generator |
+| **PicoCfg.Gen** | `CfgBind.Bind<T>` source generator (embedded in `PicoCfg.Abs`) |
 | **PicoCfg.DI** | DI integration |
 
 [← Back to PicoInfra](../README.md)
