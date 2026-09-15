@@ -110,6 +110,21 @@ jobs:
         run: dotnet csharpier check .
 
   # ---------------------------------------------------------------------------
+  # Release parity — the local release script must pack what the workflow packs
+  # ---------------------------------------------------------------------------
+  consistency:
+    name: Release parity (script ↔ workflow)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check scripts/release.ps1 packs the same projects as release.yml
+        run: bash scripts/check-release-parity.sh
+
+  # ---------------------------------------------------------------------------
   # PicoDI
   # ---------------------------------------------------------------------------
   validate-picodi:

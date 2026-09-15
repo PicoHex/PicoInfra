@@ -101,6 +101,7 @@ try {
     }
 
     Write-Host "=== Phase 1: Abstractions (bundled generators, project references) ===" -ForegroundColor Cyan
+    Pack "PicoSchedule/src/PicoSchedule/PicoSchedule.csproj" $true   # standalone, zero dependencies
     Pack "PicoDI/src/PicoDI.Abs/PicoDI.Abs.csproj" $true
     Pack "PicoAop/src/PicoAop.Abs/PicoAop.Abs.csproj" $true $true
     Pack "PicoMediator/src/PicoMediator.Abs/PicoMediator.Abs.csproj" $true
