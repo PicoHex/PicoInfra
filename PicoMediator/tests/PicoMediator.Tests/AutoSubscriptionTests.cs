@@ -82,6 +82,28 @@ public class AutoSubscriptionTests
     }
 
     [Test]
+    public async Task ManualRegistration_BeforeAddPicoMediator_Wins_WithDefaultConstruction()
+    {
+        // Regression: PicoMediator's generated auto-subscriptions used to apply when
+        // AddPicoMediator() was called, so manual registrations before it won. After
+        // the generator-configurator registries were unified, they started applying in
+        // the SvcContainer constructor — before any manual registration — which made
+        // GetServices (fan-out) resolve the generated handler on top of the manual one.
+        var log = new ListLog();
+        var container = new SvcContainer(); // default: autoConfigureFromGenerator = true
+        container.RegisterSingle<ILog>(log);
+        container.RegisterSingle<ISubscriber<OrderShipped>>(new ShipNotifier(log));
+        container.AddPicoMediator();
+        container.Build();
+        await using var scope = container.CreateScope();
+
+        var subscribers = scope.GetServices<ISubscriber<OrderShipped>>();
+
+        // Manual wins: exactly the one manual instance is registered.
+        await Assert.That(subscribers.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task AddPicoMediator_NoAutoRegisterHandlers_DoesNotRegister()
     {
         var container = new SvcContainer(autoConfigureFromGenerator: false);

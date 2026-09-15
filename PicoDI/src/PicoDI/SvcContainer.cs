@@ -81,16 +81,35 @@ public sealed partial class SvcContainer : ISvcContainer
     /// <summary>
     /// Creates a new instance of <see cref="SvcContainer"/>.
     /// </summary>
+    /// <param name="autoConfigureFromGenerator">
+    /// When true (default), source-generated configurators are applied automatically:
+    /// immediate ones (PicoDI registrations) in the constructor, deferred ones
+    /// (PicoMediator auto-subscriptions) on <see cref="Build"/> — the deferred timing
+    /// lets manual registrations made before Build win over generated ones.
+    /// </param>
     public SvcContainer(bool autoConfigureFromGenerator = true)
     {
+        _autoConfigureFromGenerator = autoConfigureFromGenerator;
         Volatile.Write(
             ref _registrationCache,
             new Dictionary<Type, List<SvcRuntimeRegistration>>()
         );
         if (autoConfigureFromGenerator)
-        {
             SvcContainerAutoConfiguration.TryApplyConfiguration(this);
-        }
+    }
+
+    private readonly bool _autoConfigureFromGenerator;
+
+    /// <summary>
+    /// Applies the deferred configurators (PicoMediator auto-subscriptions) when
+    /// auto-configuration is enabled. Runs on <see cref="Build"/> so manual
+    /// registrations made before Build are visible to the configurators' dedup
+    /// checks. Immediate configurators already ran in the constructor.
+    /// </summary>
+    private void ApplyDeferredAutoConfigurationIfEnabled()
+    {
+        if (_autoConfigureFromGenerator)
+            SvcContainerAutoConfiguration.TryApplyDeferredConfiguration(this);
     }
 
     /// <summary>

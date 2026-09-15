@@ -31,6 +31,26 @@ public static class SvcContainerAutoConfiguration
         PicoDI.Abs.GeneratorConfiguratorRegistry.TryApply(container);
 
     /// <summary>
+    /// Applies all deferred configurators (e.g. PicoMediator auto-subscriptions) to the
+    /// given container exactly once. Deferred configurators run on
+    /// <c>Build()</c> — or earlier via an explicit apply such as
+    /// <c>AddPicoMediator()</c> — so manual registrations made before Build win over
+    /// generated ones.
+    /// </summary>
+    /// <param name="container">The container to configure.</param>
+    /// <returns>True if any deferred configurators were registered and applied; otherwise, false.</returns>
+    public static bool TryApplyDeferredConfiguration(ISvcContainer container) =>
+        PicoDI.Abs.GeneratorConfiguratorRegistry.TryApplyDeferred(container);
+
+    /// <summary>True when the container has been marked as deferred-configured.</summary>
+    public static bool HasAppliedDeferredConfiguration(ISvcContainer container) =>
+        PicoDI.Abs.GeneratorConfiguratorRegistry.HasAppliedDeferred(container);
+
+    /// <summary>True when any deferred configurator has been registered.</summary>
+    public static bool HasDeferredConfigurator =>
+        PicoDI.Abs.GeneratorConfiguratorRegistry.HasAnyDeferred;
+
+    /// <summary>
     /// Marks the per-container generated-registration state as applied.
     /// This does not inspect the registry or apply any configurators.
     /// </summary>

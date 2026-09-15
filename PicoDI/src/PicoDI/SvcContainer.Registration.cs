@@ -44,6 +44,13 @@ public sealed partial class SvcContainer
     {
         DisposalGuards.ThrowIfDisposed(ref _disposed, nameof(SvcContainer));
 
+        // Apply DEFERRED source-generated configurators HERE (immediate ones ran in
+        // the constructor): manual registrations made before Build must win over
+        // generated ones (the configurators dedup per service type). An explicit
+        // apply such as AddPicoMediator() may already have marked the deferred set;
+        // TryApplyDeferred is once-per-container, so this is a no-op in that case.
+        ApplyDeferredAutoConfigurationIfEnabled();
+
         lock (_registrationLock)
         {
             if (_frozenCache != null)
