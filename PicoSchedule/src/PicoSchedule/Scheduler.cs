@@ -407,15 +407,32 @@ public sealed class Scheduler
                 _inFlightTasks[entry.JobId] = task;
             }
             _ = task.ContinueWith(
-                _ =>
+                static (completed, state) =>
                 {
-                    lock (_gate)
-                    {
-                        _inFlightTasks.Remove(entry.JobId);
-                    }
+                    var (scheduler, jobId) = ((Scheduler, Guid))state!;
+                    scheduler.UntrackInFlight(completed, jobId);
                 },
+                (this, entry.JobId),
                 TaskScheduler.Default
             );
+        }
+    }
+
+    /// <summary>Removes a completed fire task from the in-flight map — but only
+    /// when it is still the task registered for the job. A late continuation
+    /// from an earlier pulse must never untrack a NEWER running pulse (that
+    /// would defeat skip-if-busy and let the same job run concurrently).</summary>
+    private void UntrackInFlight(Task completed, Guid jobId)
+    {
+        lock (_gate)
+        {
+            if (
+                _inFlightTasks.TryGetValue(jobId, out var current)
+                && ReferenceEquals(current, completed)
+            )
+            {
+                _inFlightTasks.Remove(jobId);
+            }
         }
     }
 

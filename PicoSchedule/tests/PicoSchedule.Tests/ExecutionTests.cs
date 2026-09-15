@@ -65,6 +65,64 @@ public sealed class ExecutionTests
         await Assert.That(gated.Calls).IsEqualTo(2); // fires again after the release
     }
 
+    private sealed class OverlapDetectingSink : ITriggerSink
+    {
+        private int _running;
+        private int _calls;
+        private int _maxConcurrent;
+
+        public int Calls => Volatile.Read(ref _calls);
+        public int MaxConcurrent => Volatile.Read(ref _maxConcurrent);
+
+        public async ValueTask FireAsync(
+            Guid jobId,
+            DateTimeOffset dueUtc,
+            IReadOnlyDictionary<string, string?> payload,
+            CancellationToken ct
+        )
+        {
+            Interlocked.Increment(ref _calls);
+            var running = Interlocked.Increment(ref _running);
+            int prev;
+            while (running > (prev = Volatile.Read(ref _maxConcurrent)))
+                Interlocked.CompareExchange(ref _maxConcurrent, running, prev);
+
+            // Force a thread-pool hop so a slow continuation has a window to race
+            // with the next pulse's in-flight tracking.
+            await Task.Yield();
+            Thread.SpinWait(500);
+
+            Interlocked.Decrement(ref _running);
+        }
+    }
+
+    [Test]
+    public async Task SkipIfBusy_NeverRunsSameJobConcurrently_UnderRapidPulses()
+    {
+        // Regression: the in-flight removal continuation used to remove by job id
+        // without checking task identity. A late continuation from a finished pulse
+        // could untrack a NEWER running pulse, defeating skip-if-busy and letting the
+        // same job run concurrently (and FlushNowAsync could miss draining it).
+        var clock = new FakeClock(Start);
+        var sink = new OverlapDetectingSink();
+        var s = new Scheduler(new SchedulerOptions { Clock = clock, BurstLimit = 1000 });
+        var id = Guid.CreateVersion7();
+        s.Register(id, "* * * * *", sink, null, Utc);
+
+        for (var i = 0; i < 2000; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(60)); // one pulse per iteration
+            await s.FlushCoreOnlyAsync(clock.UtcNow); // fire-and-forget (no drain)
+            if (i % 50 == 0)
+                await s.FlushNowAsync(); // occasional drain
+        }
+        await s.FlushNowAsync();
+
+        // Contract: per-job execution is serial — skip-if-busy never overlaps the
+        // same job with itself.
+        await Assert.That(sink.MaxConcurrent).IsEqualTo(1);
+    }
+
     [Test]
     public async Task ConcurrentSinks_DifferentJobs_MayOverlap()
     {
