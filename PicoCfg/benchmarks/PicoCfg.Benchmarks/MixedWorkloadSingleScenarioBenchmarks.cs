@@ -18,6 +18,13 @@ public sealed partial class MixedWorkloadSingleScenarioBenchmarks
         _lookupPassCount = lookupPassCount;
     }
 
+    // PicoBench 2026.2.6 (PBGEN015) requires a public parameterless constructor
+    // on [BenchmarkClass] types even when they are only run via the instance
+    // overload. The CLI always constructs this class with explicit scenario
+    // values; the defaults below only back the generic Run<T>() entry point.
+    public MixedWorkloadSingleScenarioBenchmarks()
+        : this(100, 1, 1) { }
+
     [GlobalSetup]
     public void Setup()
     {
