@@ -26,6 +26,9 @@ dotnet test PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj
 dotnet test PicoCfg/tests/PicoCfg.DI.Tests/PicoCfg.DI.Tests.csproj
 dotnet test PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj
 dotnet test PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj
+dotnet test PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj
+dotnet test PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj
+dotnet test PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj
 ```
 
 Or run all tests at once (slower; CI runs per project instead):
