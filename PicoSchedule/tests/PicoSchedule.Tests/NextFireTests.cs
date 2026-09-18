@@ -156,4 +156,144 @@ public sealed class NextFireTests
         var nmm = cmm.NextFire(Base, TimeZoneInfo.Utc);
         await Assert.That(nmm).IsEqualTo(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
     }
+
+    [Test]
+    public async Task Feb29_NextLeapOccurrence_IsFound()
+    {
+        // "0 0 29 2 *" is legal in the documented dialect. From March 2028 the
+        // next Feb 29 is 2032 (1460 days away) — beyond the old 400-day search
+        // cap that made this pattern throw once the leap day had passed.
+        var c = CronPattern.Parse("0 0 29 2 *");
+        var n = c.NextFire(
+            new DateTimeOffset(2028, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(n).IsEqualTo(new DateTimeOffset(2032, 2, 29, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    [Test]
+    public async Task Feb29_CenturyGap_FindsEightYearOccurrence()
+    {
+        // 2100 is not a leap year: 2096-02-29 -> 2104-02-29 is the maximum legal
+        // gap in this dialect (2921 days). The search window must cover it.
+        var c = CronPattern.Parse("0 0 29 2 *");
+        var n = c.NextFire(
+            new DateTimeOffset(2096, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(n).IsEqualTo(new DateTimeOffset(2104, 2, 29, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    [Test]
+    public async Task CronSearch_StepCount_IsFieldScaled_NotMinuteScaled()
+    {
+        // Deterministic performance contract: the search must jump by calendar
+        // fields, not scan elapsed minutes (the old minute probe cost ~2M steps
+        // and ~130ms under the scheduler lock for a Feb-29 pattern).
+        var feb29 = CronPattern.Parse("0 0 29 2 *");
+        var n = feb29.NextFireCore(
+            new DateTimeOffset(2028, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc,
+            out var steps
+        );
+        await Assert.That(n).IsEqualTo(new DateTimeOffset(2032, 2, 29, 0, 0, 0, TimeSpan.Zero));
+        await Assert.That(steps).IsLessThan(5_000);
+
+        var yearly = CronPattern.Parse("0 0 1 1 *");
+        var y = yearly.NextFireCore(
+            new DateTimeOffset(2026, 1, 2, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc,
+            out var yearlySteps
+        );
+        await Assert.That(y).IsEqualTo(new DateTimeOffset(2027, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        await Assert.That(yearlySteps).IsLessThan(1_000);
+    }
+
+    [Test]
+    public async Task W_DayBeyondShortMonth_SkipsMonth()
+    {
+        // "30W" has no anchor in February (no 30th). That month must simply not
+        // match; it used to throw ArgumentOutOfRangeException from ClosestWeekday.
+        var c = CronPattern.Parse("0 0 30W * *");
+        var n = c.NextFire(
+            new DateTimeOffset(2026, 1, 30, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(n).IsEqualTo(new DateTimeOffset(2026, 3, 30, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    [Test]
+    public async Task SecondsField_SubSecondInput_StaysOnWholeSeconds()
+    {
+        // Matching happens at whole seconds: a sub-second "after" must not shift
+        // every subsequent fire time onto that sub-second fraction.
+        var c = CronPattern.Parse("* * * * * *");
+        var n = c.NextFire(
+            new DateTimeOffset(2026, 9, 10, 12, 0, 0, 500, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(n).IsEqualTo(new DateTimeOffset(2026, 9, 10, 12, 0, 1, TimeSpan.Zero));
+    }
+
+    [Test]
+    public async Task Dst_FallBack_RepeatedLocalTime_FiresTwice()
+    {
+        // Characterization: on fall-back day the same wall time occurs twice;
+        // instant-order scheduling treats both as fire times (existing behavior,
+        // preserved by the structural search through its overlap handling).
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var c = CronPattern.Parse("30 2 * * *");
+        var first = c.NextFire(new DateTimeOffset(2026, 10, 25, 0, 0, 0, TimeSpan.Zero), tz);
+        await Assert
+            .That(first)
+            .IsEqualTo(new DateTimeOffset(2026, 10, 25, 0, 30, 0, TimeSpan.Zero));
+
+        var second = c.NextFire(first, tz);
+        await Assert
+            .That(second)
+            .IsEqualTo(new DateTimeOffset(2026, 10, 25, 1, 30, 0, TimeSpan.Zero));
+
+        var third = c.NextFire(second, tz);
+        await Assert
+            .That(third)
+            .IsEqualTo(new DateTimeOffset(2026, 10, 26, 1, 30, 0, TimeSpan.Zero));
+    }
+
+    [Test]
+    public async Task FiredInstant_LocalWallClock_AlwaysMatchesPattern()
+    {
+        // Invariant: the returned instant, converted back into the zone, must
+        // satisfy the pattern — that is the wall clock the caller observes.
+        // Some tz databases make the two directions disagree (Pacific/Apia 2011
+        // on Windows tz data: local 2012-01-01 00:00 maps to an instant that
+        // reads back as 2011-12-31 00:00), which the round-trip guard rejects.
+        var tz = TimeZoneInfo.FindSystemTimeZoneById("Pacific/Apia");
+        var c = CronPattern.Parse("0 0 1 1 *");
+        var next = c.NextFire(new DateTimeOffset(2011, 11, 1, 16, 3, 0, TimeSpan.Zero), tz);
+        var local = TimeZoneInfo.ConvertTime(next, tz);
+        await Assert.That(c.Matches(local)).IsTrue();
+    }
+
+    [Test]
+    public async Task FifthWeekdayOfRestrictedMonth_FindsMultiDecadeOccurrence()
+    {
+        // Month-restricted 5th-weekday patterns are legal but can be decades
+        // apart: Feb 5th Friday after 2008 is 2036-02-29 (28y) and Feb 5th
+        // Monday spans 2072 -> 2112 (40y) across the skipped leap century 2100.
+        // The Gregorian calendar repeats every 400 years (20,871 whole weeks),
+        // so that — not a fixed multi-year cap — is the provable search bound.
+        var fifthFriday = CronPattern.Parse("0 0 * 2 5#5");
+        var nf = fifthFriday.NextFire(
+            new DateTimeOffset(2008, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(nf).IsEqualTo(new DateTimeOffset(2036, 2, 29, 0, 0, 0, TimeSpan.Zero));
+
+        var fifthMonday = CronPattern.Parse("0 0 * 2 1#5");
+        var nm = fifthMonday.NextFire(
+            new DateTimeOffset(2072, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(nm).IsEqualTo(new DateTimeOffset(2112, 2, 29, 0, 0, 0, TimeSpan.Zero));
+    }
 }

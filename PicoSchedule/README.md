@@ -67,6 +67,9 @@ await scheduler.StopAsync();
 `*` `*/n` `a-b` `a,b,c` `?` seconds (6-field) dow 0-7 name aliases
 (`MON`/`jan`) `N#K` (K-th weekday) `L`/`NL` (last) `Nw` (nearest weekday)
 `@hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight`.
+`Nw` months without that day (e.g. `30W` in February) simply do not match; day/month
+combinations that can never match (e.g. `31 2`, `30W 2`) are rejected by `Parse` with
+`ArgumentException`.
 Excluded by design: `H/R` hash (distributed semantics) and a year field (YAGNI).
 
 ## Boundaries

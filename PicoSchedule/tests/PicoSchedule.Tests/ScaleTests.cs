@@ -1,10 +1,10 @@
-using System.Diagnostics;
-
 namespace PicoSchedule.Tests;
 
-/// <summary>Wall-clock budget tests — run in isolation so parallel test load
-/// cannot distort the measurements (the budgets encode the algorithmic
-/// contracts asserted deterministically in PerformanceContractTests).</summary>
+/// <summary>Scale contracts for 10k jobs, asserted deterministically — no
+/// wall-clock budgets: a cross-process parallel test run cannot measure time
+/// reliably. Registration must mark the snapshot dirty instead of rebuilding it
+/// per mutation, and next-fire searches must stay field-scaled rather than
+/// per-minute (both are counted by the scheduler's test hooks).</summary>
 [NotInParallel]
 public sealed class ScaleTests
 {
@@ -28,25 +28,34 @@ public sealed class ScaleTests
     }
 
     [Test]
-    public async Task TenThousandJobs_RegisterAndFlush_WithinBudget()
+    public async Task TenThousandJobs_RegisterAndFlush_StaysAlgorithmicallyLinear()
     {
         var clock = new FakeClock(Start);
         var sink = new CountingSink();
         var s = new Scheduler(new SchedulerOptions { Clock = clock, BurstLimit = 20_000 });
 
-        var sw = Stopwatch.StartNew();
         for (var i = 0; i < 10_000; i++)
             s.Register(Guid.CreateVersion7(), "0 9 * * *", sink, null, Utc);
-        sw.Stop();
-        await Assert.That(sw.ElapsedMilliseconds).IsLessThan(5000);
+
+        // Registration only marks the snapshot dirty: no O(N) rebuild per mutation.
+        // The next-fire search is field-scaled — a per-minute probe would exceed
+        // ~5M steps for these registrations alone.
+        await Assert.That(s.SnapshotRebuilds).IsEqualTo(0);
+        await Assert.That(s.CronSearchSteps).IsLessThan(1_000_000);
+
         await Assert.That(s.Snapshot).Count().IsEqualTo(10_000);
+        await Assert.That(s.SnapshotRebuilds).IsEqualTo(1);
+        _ = s.Snapshot; // cached — no second rebuild
+        await Assert.That(s.SnapshotRebuilds).IsEqualTo(1);
 
         clock.Advance(TimeSpan.FromHours(9));
-        sw.Restart();
         await s.FlushNowAsync();
-        sw.Stop();
         await Assert.That(sink.Fired).IsEqualTo(10_000);
-        await Assert.That(sw.ElapsedMilliseconds).IsLessThan(5000);
+
+        // Every entry advanced one day at ~90 search steps; a per-minute probe
+        // would cost ~14M steps here.
+        await Assert.That(s.CronSearchSteps).IsLessThan(2_000_000);
+        await Assert.That(s.GraceIntervalComputations).IsEqualTo(0); // exactly due — no estimate
 
         // all entries advanced into tomorrow — snapshot consistent
         await Assert

@@ -105,4 +105,37 @@ public sealed class CronParserTests
         await Assert.That(() => CronPattern.Parse("5-1 * * * *")).Throws<ArgumentException>(); // descending range
         await Assert.That(() => CronPattern.Parse("*/0 * * * *")).Throws<ArgumentException>(); // zero step
     }
+
+    [Test]
+    public async Task Parse_ImpossibleDayMonth_Throws()
+    {
+        // A day-of-month that exists in no selected month can never match:
+        // reject at parse time (it used to be a runtime InvalidOperationException).
+        await Assert.That(() => CronPattern.Parse("0 0 31 2 *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 30 2 *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 31 2,4 *")).Throws<ArgumentException>(); // Feb 29, Apr 30
+        await Assert.That(() => CronPattern.Parse("0 0 31 4,6,9,11 *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 31W 2 *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 30W 2 *")).Throws<ArgumentException>();
+
+        // Satisfiable neighbours must stay accepted (no throw = pass).
+        CronPattern.Parse("0 0 29 2 *"); // leap day exists
+        CronPattern.Parse("0 0 30 2,4 *"); // Apr 30 exists
+        CronPattern.Parse("0 0 30 2 1"); // OR with dow — Mondays in February
+        CronPattern.Parse("0 0 L 2 *"); // last day of February
+        CronPattern.Parse("0 0 30W * *"); // matches 30ths in the other months
+    }
+
+    [Test]
+    public async Task Parse_EmptyFieldSelection_Throws()
+    {
+        // A field consisting only of separators selects no values. It used to be
+        // accepted, and the 400-year structural search then scanned every minute
+        // (or second) before throwing — minutes of lock-held CPU inside the
+        // scheduler. Fail fast at parse time instead.
+        await Assert.That(() => CronPattern.Parse("0 , * * *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse(", 0 0 * * *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 * * ,")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 * , *")).Throws<ArgumentException>();
+    }
 }

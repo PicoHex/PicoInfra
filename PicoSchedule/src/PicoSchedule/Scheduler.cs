@@ -50,6 +50,7 @@ public sealed class Scheduler
             {
                 if (_snapshotCache is null || _dirty)
                 {
+                    SnapshotRebuilds++;
                     _snapshotCache = BuildSnapshot();
                     _dirty = false;
                 }
@@ -190,7 +191,7 @@ public sealed class Scheduler
                         _wheel.Remove(oldSlot); // empty-slot pruning (§5)
                 }
             }
-            entry.NextFireUtc = entry.Cron.NextFire(_clock.UtcNow, entry.Tz);
+            entry.NextFireUtc = NextFireTracked(entry.Cron, _clock.UtcNow, entry.Tz);
             var slot = SlotOf(entry.NextFireUtc);
             AddToSlot(slot, entry);
             _byJobId[jobId] = (slot, entry);
@@ -231,7 +232,8 @@ public sealed class Scheduler
             if (!_byJobId.TryGetValue(jobId, out var existing))
                 return; // silent
             existing.Entry.Enabled = true;
-            existing.Entry.NextFireUtc = existing.Entry.Cron.NextFire(
+            existing.Entry.NextFireUtc = NextFireTracked(
+                existing.Entry.Cron,
                 _clock.UtcNow,
                 existing.Entry.Tz
             );
@@ -255,7 +257,7 @@ public sealed class Scheduler
                 return; // silent
             RemoveFromSlot(existing.Slot, existing.Entry);
             existing.Entry.Cron = cron;
-            existing.Entry.NextFireUtc = cron.NextFire(_clock.UtcNow, existing.Entry.Tz);
+            existing.Entry.NextFireUtc = NextFireTracked(cron, _clock.UtcNow, existing.Entry.Tz);
             existing.Entry.IntervalEstimate = null; // cron changed — stale estimate
             var slot = SlotOf(existing.Entry.NextFireUtc);
             AddToSlot(slot, existing.Entry);
@@ -346,7 +348,16 @@ public sealed class Scheduler
                     // it cannot change the outcome (see BeyondGrace).
                     if (BeyondGrace(entry, now))
                     {
-                        FastForward(entry, now); // 3) beyond grace / disabled
+                        try
+                        {
+                            FastForward(entry, now); // 3) beyond grace / disabled
+                        }
+                        catch (Exception ex)
+                        {
+                            // Per-entry containment: one failing entry must never
+                            // abort the flush for every other due job.
+                            RecordFailure(entry, ex);
+                        }
                     }
                     else
                     {
@@ -362,15 +373,27 @@ public sealed class Scheduler
             // 5) snapshot due timestamps BEFORE advancing (Advance relocates
             //    NextFireUtc into the future — the sink must receive the slot
             //    that actually fired).
-            toFire = batch.Select(b => (b.Entry, b.Entry.NextFireUtc)).ToList();
+            var dueTimes = batch.Select(b => (b.Entry, b.Entry.NextFireUtc)).ToList();
 
             // 6) advance ONLY the admitted batch (now-based, never chase the
             //    period); the burst-excess entries STAY overdue and keep
             //    competing in the next tick's ordering (spec §6). Advancing
             //    every due entry would silently skip the capped remainder.
-            foreach (var (entry, _) in batch)
+            //    An advance failure is contained per entry: a bad entry stays
+            //    out of this pulse and the failure governance (RecordFailure)
+            //    auto-pauses it after MaxConsecutiveFailures — the flush must
+            //    never abort for the other due jobs.
+            foreach (var (entry, dueUtc) in dueTimes)
             {
-                Advance(entry, now);
+                try
+                {
+                    Advance(entry, now);
+                    toFire.Add((entry, dueUtc));
+                }
+                catch (Exception ex)
+                {
+                    RecordFailure(entry, ex);
+                }
             }
         }
 
@@ -485,8 +508,9 @@ public sealed class Scheduler
 
     private void FastForward(JobEntry entry, DateTimeOffset now)
     {
+        ThrowIfAdvanceBombed(entry);
         // recompute to a future slot without firing
-        var next = entry.Cron.NextFire(now, entry.Tz);
+        var next = NextFireTracked(entry.Cron, now, entry.Tz);
         if (_byJobId.TryGetValue(entry.JobId, out var idx))
         {
             RemoveFromSlot(idx.Slot, entry);
@@ -501,7 +525,8 @@ public sealed class Scheduler
 
     private void Advance(JobEntry entry, DateTimeOffset now)
     {
-        var next = entry.Cron.NextFire(now, entry.Tz);
+        ThrowIfAdvanceBombed(entry);
+        var next = NextFireTracked(entry.Cron, now, entry.Tz);
         if (_byJobId.TryGetValue(entry.JobId, out var idx))
         {
             RemoveFromSlot(idx.Slot, entry);
@@ -554,6 +579,36 @@ public sealed class Scheduler
     /// work. Verifies the loop's catch-all (review R4-1) — a transient flush
     /// failure must never kill the scheduler thread.</summary>
     internal volatile bool BombFlushNextTick;
+
+    /// <summary>TEST ARM: the next Advance/FastForward of the given job throws
+    /// before doing any work. Verifies per-entry containment — one failing entry
+    /// must not abort the flush for every other due job.</summary>
+    internal Guid? BombAdvanceForJobId;
+
+    private void ThrowIfAdvanceBombed(JobEntry entry)
+    {
+        if (BombAdvanceForJobId == entry.JobId)
+        {
+            BombAdvanceForJobId = null;
+            throw new InvalidOperationException("test bomb inside advance");
+        }
+    }
+
+    /// <summary>TEST HOOK — cumulative cron search steps spent on next-fire
+    /// computations. Contract: field-scaled, never a per-minute probe.</summary>
+    internal long CronSearchSteps;
+
+    /// <summary>TEST HOOK — number of times the lazily built snapshot cache was
+    /// rebuilt. Contract: management mutations only mark it dirty; a 10k
+    /// registration burst rebuilds zero times until the snapshot is read.</summary>
+    internal long SnapshotRebuilds;
+
+    private DateTimeOffset NextFireTracked(CronPattern cron, DateTimeOffset after, TimeZoneInfo tz)
+    {
+        var next = cron.NextFireCore(after, tz, out var steps);
+        CronSearchSteps += steps;
+        return next;
+    }
 
     /// <summary>TEST HOOK — cumulative count of grace interval estimates that were
     /// actually computed. Contract: one estimate per job entry per fire cycle,

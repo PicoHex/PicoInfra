@@ -9,7 +9,17 @@ namespace PicoSchedule;
 /// </summary>
 public sealed class CronPattern
 {
-    private const int MaxSearchDays = 400; // every legal pattern matches within this
+    /// <summary>Safety bound for the structural search. The Gregorian calendar
+    /// repeats exactly every 400 years (146,097 days = 20,871 whole weeks), so
+    /// every satisfiable pattern has a match within 400 years of any instant —
+    /// this bound is provably unreachable for satisfiable patterns and only
+    /// guarantees termination if parse-time validation ever misses one.</summary>
+    private const int MaxSearchYears = 400;
+
+    /// <summary>Upper bound for the fall-back overlap walk, counted in loop steps
+    /// (one second or one minute of instants per step, depending on the seconds
+    /// field) — far above any real overlap, so the walk always leaves ambiguity first.</summary>
+    private const int MaxOverlapWalkIterations = 4 * 60 * 60;
 
     private static readonly Dictionary<string, string> AtShorthands = new(StringComparer.Ordinal)
     {
@@ -83,7 +93,8 @@ public sealed class CronPattern
     /// composable inside ranges/lists and the dow `N#K` / `NL` modifiers)
     /// and `@hourly/@daily/@weekly/@monthly/@yearly/@annually/@midnight`.
     /// Throws <see cref="ArgumentException"/> on syntax errors and
-    /// out-of-range values.</summary>
+    /// out-of-range values, and for day/month combinations that can never match
+    /// (e.g. "31 2", "30W 2").</summary>
     public static CronPattern Parse(string expr)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(expr);
@@ -106,53 +117,123 @@ public sealed class CronPattern
         var dom = ParseDom(parts[i++]);
         fields[4] = ParseBits(parts[i++], 1, 12, MonthAliases);
         var dow = ParseDow(parts[i], DowAliases);
+        ValidateDayMonthCombination(fields[4], dom, dow);
 
         return new CronPattern(fields, hasSeconds, dom, dow);
     }
 
     /// <summary>Next absolute fire time strictly after <paramref name="afterUtc"/>,
-    /// with fields matched inside <paramref name="tz"/> wall-clock. DST gaps are
-    /// skipped naturally (wall clock advances to a valid minute before the next
-    /// match; if the probe lands inside a skipped minute the next candidate is
-    /// probed). Throws <see cref="InvalidOperationException"/> when no match
-    /// occurs within <see cref="MaxSearchDays"/> days (unreachable for legal
-    /// patterns — the contract guarantees any pattern hits within 400 days).</summary>
-    public DateTimeOffset NextFire(DateTimeOffset afterUtc, TimeZoneInfo tz)
+    /// with fields matched inside <paramref name="tz"/> wall-clock. The search jumps
+    /// by calendar fields (month → day → hour → minute → second) instead of scanning
+    /// elapsed minutes, so sparse patterns — including month-restricted 5th-weekday
+    /// patterns that can be decades apart — cost ~10³ steps rather than ~10⁶. DST
+    /// gaps are skipped (a wall time that does not exist never matches); on fall-back
+    /// overlap days both instants of a repeated wall time are fire times (instant
+    /// order). Throws <see cref="ArgumentException"/> at parse time for patterns that
+    /// can never match; the runtime <see cref="InvalidOperationException"/> is a
+    /// defensive backstop bounded by the 400-year Gregorian cycle.</summary>
+    public DateTimeOffset NextFire(DateTimeOffset afterUtc, TimeZoneInfo tz) =>
+        NextFireCore(afterUtc, tz, out _);
+
+    /// <summary>NextFire plus the number of search steps taken — deterministic
+    /// instrumentation for the performance contracts (steps scale with field jumps,
+    /// not with elapsed minutes). No state: the pattern stays semantically stateless.</summary>
+    internal DateTimeOffset NextFireCore(DateTimeOffset afterUtc, TimeZoneInfo tz, out long steps)
     {
-        // Probe forward minute by minute (second by second within the candidate
-        // minute when a seconds field exists) until the 400-day deadline — the
-        // language-completeness contract guarantees any legal pattern hits.
-        // The probe starts at the next full minute (a naked second within the
-        // start minute must not count as a fire time).
-        // Probe start: with a seconds field — at after+1s (exact second matching);
-        // without — at the next full minute (a naked second within the start
-        // minute must not count as a fire time).
-        var deadline = afterUtc.AddDays(MaxSearchDays);
-        var probe = _hasSeconds
-            ? afterUtc.AddSeconds(1)
-            : TimeZoneInfo.ConvertTime(NextMinute(afterUtc), tz);
-        while (probe <= deadline)
+        steps = 0;
+        var afterLocal = TimeZoneInfo.ConvertTime(afterUtc, tz);
+        var probeInstant = afterUtc;
+
+        if (tz.IsAmbiguousTime(afterLocal.DateTime))
         {
-            var local = TimeZoneInfo.ConvertTime(probe, tz);
-            if (!_hasSeconds)
+            // Fall-back overlap: the same wall time occurs twice. A local-monotonic
+            // field search would skip the second occurrence, so walk instants through
+            // the overlap (bounded by its length) exactly like the pre-rewrite probe.
+            for (var walked = 0; walked < MaxOverlapWalkIterations; walked++)
             {
+                steps++;
+                probeInstant = probeInstant.Add(
+                    _hasSeconds ? TimeSpan.FromSeconds(1) : TimeSpan.FromMinutes(1)
+                );
+                var local = TimeZoneInfo.ConvertTime(probeInstant, tz);
                 if (Matches(local))
                     return local;
-                probe = TimeZoneInfo.ConvertTime(NextMinute(local), tz);
+                if (!tz.IsAmbiguousTime(local.DateTime))
+                    break;
+            }
+        }
+
+        // Field-jumping search over wall-clock time; every branch advances the
+        // candidate strictly forward, so the loop cannot spin.
+        var start = TimeZoneInfo.ConvertTime(probeInstant, tz);
+        var candidate = _hasSeconds
+            ? FloorToSecond(start.DateTime).AddSeconds(1)
+            : FloorToMinute(start.DateTime).AddMinutes(1);
+        var maxYear = afterLocal.Year + MaxSearchYears;
+
+        while (true)
+        {
+            steps++;
+            if (candidate.Year > maxYear)
+                throw new InvalidOperationException(
+                    $"cron pattern did not match within {MaxSearchYears} years"
+                );
+
+            if (!_fields[4][candidate.Month])
+            {
+                candidate = NextMonthStart(candidate);
                 continue;
             }
 
-            // seconds field: scan every second of the candidate minute, then advance
-            var minuteStart = local.AddSeconds(-local.Second);
-            for (var s = local.Second; s < 60; s++)
+            if (!DayMatches(candidate))
             {
-                var candidate = minuteStart.AddSeconds(s);
-                if (Matches(candidate))
-                    return candidate;
+                candidate = candidate.Date.AddDays(1);
+                continue;
             }
-            probe = TimeZoneInfo.ConvertTime(NextMinute(minuteStart), tz);
+
+            if (!_fields[2][candidate.Hour])
+            {
+                candidate = NextHourStart(candidate);
+                continue;
+            }
+
+            if (!_fields[1][candidate.Minute])
+            {
+                candidate = NextMinuteStart(candidate);
+                continue;
+            }
+
+            if (_hasSeconds && !_fields[0][candidate.Second])
+            {
+                candidate = candidate.AddSeconds(1);
+                continue;
+            }
+
+            // Wall clock fully matches — resolve through the time zone.
+            if (tz.IsInvalidTime(candidate))
+            {
+                // Spring-forward gap: the wall time does not exist; step past it.
+                candidate = candidate.AddSeconds(_hasSeconds ? 1 : 60);
+                continue;
+            }
+
+            foreach (var instant in ResolveInstants(candidate, tz))
+            {
+                // Round-trip guard: the instant must read back as the same wall
+                // time (instant → local). Some tz databases make the two
+                // directions disagree (Pacific/Apia 2011 on Windows tz data);
+                // the scheduling contract is the wall clock the caller sees.
+                if (TimeZoneInfo.ConvertTime(instant, tz).DateTime != candidate)
+                    continue;
+
+                if (instant.UtcDateTime > afterUtc.UtcDateTime)
+                    return instant;
+            }
+
+            // Overlap candidate whose occurrences are both ≤ after is unreachable
+            // (the walk above starts inside the overlap); advance defensively.
+            candidate = candidate.AddSeconds(_hasSeconds ? 1 : 60);
         }
-        throw new InvalidOperationException("cron pattern did not match within 400 days");
     }
 
     /// <summary>Period estimate — the difference between the next two fire
@@ -174,7 +255,11 @@ public sealed class CronPattern
             return false;
         if (!_fields[4][local.Month])
             return false;
+        return DayMatches(local.DateTime);
+    }
 
+    private bool DayMatches(DateTime local)
+    {
         var domHit = DomHits(local);
         var dowHit = DowHits(local);
         if (_dom.Restricted && _dow.Restricted)
@@ -186,19 +271,21 @@ public sealed class CronPattern
         return true;
     }
 
-    private bool DomHits(DateTimeOffset local)
+    private bool DomHits(DateTime local)
     {
         if (_dom.LastDay)
             return local.Day == DateTime.DaysInMonth(local.Year, local.Month);
         if (_dom.NearestDay is { } nd)
         {
-            var closest = ClosestWeekday(local.Year, local.Month, nd);
-            return local.Day == closest;
+            var days = DateTime.DaysInMonth(local.Year, local.Month);
+            if (nd > days)
+                return false; // this month has no such day (e.g. "30W" in February)
+            return local.Day == ClosestWeekday(local.Year, local.Month, nd);
         }
         return _dom.Bits[local.Day];
     }
 
-    private bool DowHits(DateTimeOffset local)
+    private bool DowHits(DateTime local)
     {
         if (_dow.Nth is { } nth)
             return (int)local.DayOfWeek == nth.Dow
@@ -237,8 +324,6 @@ public sealed class CronPattern
         }
         return day;
     }
-
-    internal bool RequiresSeconds => _hasSeconds;
 
     private static DayOfMonthSpec ParseDom(string raw)
     {
@@ -307,7 +392,16 @@ public sealed class CronPattern
                 set[ParseAtom(item, lo, hi, aliases)] = true;
             }
         }
-        return set;
+
+        // A field that selects no values can never match; reject it here so a
+        // malformed expression fails fast instead of driving a multi-year search
+        // (which would hold the scheduler gate for minutes for wildcard fields).
+        for (var v = lo; v <= hi; v++)
+        {
+            if (set[v])
+                return set;
+        }
+        throw new ArgumentException($"field '{raw}' selects no values");
     }
 
     /// <summary>Resolve one field atom — an exact name alias (case-insensitive)
@@ -350,8 +444,100 @@ public sealed class CronPattern
         return v;
     }
 
-    private static DateTimeOffset NextMinute(DateTimeOffset local) =>
-        local.AddSeconds(60 - local.Second).AddMilliseconds(-local.Millisecond);
+    private static DateTime FloorToSecond(DateTime local) =>
+        new(
+            local.Year,
+            local.Month,
+            local.Day,
+            local.Hour,
+            local.Minute,
+            local.Second,
+            DateTimeKind.Unspecified
+        );
+
+    private static DateTime FloorToMinute(DateTime local) =>
+        new(
+            local.Year,
+            local.Month,
+            local.Day,
+            local.Hour,
+            local.Minute,
+            0,
+            DateTimeKind.Unspecified
+        );
+
+    private static DateTime NextMonthStart(DateTime c) =>
+        new DateTime(c.Year, c.Month, 1, 0, 0, 0, DateTimeKind.Unspecified).AddMonths(1);
+
+    private static DateTime NextHourStart(DateTime c) =>
+        new DateTime(c.Year, c.Month, c.Day, c.Hour, 0, 0, DateTimeKind.Unspecified).AddHours(1);
+
+    private static DateTime NextMinuteStart(DateTime c) =>
+        new DateTime(
+            c.Year,
+            c.Month,
+            c.Day,
+            c.Hour,
+            c.Minute,
+            0,
+            DateTimeKind.Unspecified
+        ).AddMinutes(1);
+
+    /// <summary>Wall time → instants, ascending. A gap (spring-forward) yields
+    /// nothing; an overlap (fall-back) yields both occurrences.</summary>
+    private static DateTimeOffset[] ResolveInstants(DateTime local, TimeZoneInfo tz)
+    {
+        if (tz.IsInvalidTime(local))
+            return [];
+
+        if (tz.IsAmbiguousTime(local))
+        {
+            var offsets = tz.GetAmbiguousTimeOffsets(local);
+            var a = new DateTimeOffset(local, offsets[0]);
+            var b = new DateTimeOffset(local, offsets[1]);
+            return a <= b ? [a, b] : [b, a];
+        }
+
+        return [new DateTimeOffset(local, tz.GetUtcOffset(local))];
+    }
+
+    /// <summary>Rejects day-of-month values that exist in no selected month
+    /// (e.g. "31 2", "30 2", "30W 2") at parse time. A restricted day-of-week
+    /// makes the pattern satisfiable through OR semantics, so it is not checked.</summary>
+    private static void ValidateDayMonthCombination(
+        bool[] months,
+        DayOfMonthSpec dom,
+        DayOfWeekSpec dow
+    )
+    {
+        if (dow.Restricted || dom.LastDay)
+            return;
+
+        // 2000 is a leap year, so Feb yields 29 — the leap-day case stays valid.
+        if (dom.NearestDay is { } nearest)
+        {
+            for (var month = 1; month <= 12; month++)
+            {
+                if (months[month] && nearest <= DateTime.DaysInMonth(2000, month))
+                    return;
+            }
+            throw new ArgumentException(
+                $"day-of-month '{nearest}W' does not exist in any selected month"
+            );
+        }
+
+        for (var day = 1; day <= 31; day++)
+        {
+            if (!dom.Bits[day])
+                continue;
+            for (var month = 1; month <= 12; month++)
+            {
+                if (months[month] && day <= DateTime.DaysInMonth(2000, month))
+                    return;
+            }
+        }
+        throw new ArgumentException("day-of-month values do not exist in any selected month");
+    }
 }
 
 file static class BoolArrayExtensions

@@ -51,6 +51,56 @@ public sealed class LoopResilienceTests
         await Assert.That(scheduler.Snapshot[0].ConsecutiveFailures).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task AdvanceBomb_OneEntryFailed_OtherDueJobsStillFire()
+    {
+        // A failure while advancing ONE entry must not abort the whole flush:
+        // before the containment fix the exception escaped FlushCoreAsync and
+        // every other due job on the wheel was starved on every tick.
+        var clock = new FakeClock(Start);
+        var entries = new List<ScheduleLogEntry>();
+        var scheduler = new Scheduler(
+            new SchedulerOptions
+            {
+                Clock = clock,
+                Log = entries.Add,
+                BurstLimit = 100,
+            }
+        );
+        var healthy = new CountingSink();
+        var bombedId = Guid.CreateVersion7();
+        scheduler.Register(bombedId, "0 9 * * *", new OkSink(), null, Utc);
+        scheduler.Register(Guid.CreateVersion7(), "0 9 * * *", healthy, null, Utc);
+        clock.Advance(TimeSpan.FromHours(9));
+
+        scheduler.BombAdvanceForJobId = bombedId;
+        await scheduler.FlushNowAsync(); // must not throw
+
+        // the healthy due job fired in the same flush
+        await Assert.That(healthy.Fired).IsEqualTo(1);
+
+        // the failing entry was recorded (failure governance), not silently skipped
+        var bombed = scheduler.Snapshot.Single(s => s.JobId == bombedId);
+        await Assert.That(bombed.ConsecutiveFailures).IsEqualTo(1);
+        await Assert.That(entries.Any(e => e.JobId == bombedId && e.Level == "Error")).IsTrue();
+    }
+
+    private sealed class CountingSink : ITriggerSink
+    {
+        public int Fired;
+
+        public ValueTask FireAsync(
+            Guid jobId,
+            DateTimeOffset dueUtc,
+            IReadOnlyDictionary<string, string?> payload,
+            CancellationToken ct
+        )
+        {
+            Interlocked.Increment(ref Fired);
+            return default;
+        }
+    }
+
     private sealed class OkSink : ITriggerSink
     {
         public ValueTask FireAsync(

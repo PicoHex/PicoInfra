@@ -202,4 +202,63 @@ public sealed class ExecutionTests
             return default;
         }
     }
+
+    [Test]
+    public async Task LeapDayJob_Fires_AndSchedulerContinues()
+    {
+        // Regression: "0 0 29 2 *" used to pass Register while the next leap day
+        // was inside the 400-day window, then throw inside Advance once that day
+        // arrived — aborting the whole flush and starving every other job on
+        // every subsequent tick.
+        var clock = new FakeClock(new DateTimeOffset(2028, 2, 28, 23, 59, 0, TimeSpan.Zero));
+        var leap = new CountingSink();
+        var perMinute = new CountingSink();
+        var criticals = 0;
+        var s = new Scheduler(
+            new SchedulerOptions
+            {
+                Clock = clock,
+                Log = e =>
+                {
+                    if (e.Level == "Critical")
+                        criticals++;
+                },
+                BurstLimit = 100,
+            }
+        );
+        s.Register(Guid.CreateVersion7(), "0 0 29 2 *", leap, null, Utc);
+        s.Register(Guid.CreateVersion7(), "* * * * *", perMinute, null, Utc);
+
+        clock.Advance(TimeSpan.FromSeconds(70)); // 2028-02-29 00:00:10
+        await s.FlushNowAsync();
+        await Assert.That(leap.Fired).IsEqualTo(1);
+        await Assert.That(perMinute.Fired).IsEqualTo(1); // same flush, not starved
+
+        clock.Advance(TimeSpan.FromSeconds(60)); // 00:01:10 — next minute pulse
+        await s.FlushNowAsync();
+        await Assert.That(perMinute.Fired).IsEqualTo(2); // the scheduler is still alive
+        await Assert.That(criticals).IsEqualTo(0);
+
+        // the leap job advanced to the next legal occurrence
+        var leapSnapshot = s.Snapshot.Single(x => x.CronExpression == "0 0 29 2 *");
+        await Assert
+            .That(leapSnapshot.NextFireUtc)
+            .IsEqualTo(new DateTimeOffset(2032, 2, 29, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    private sealed class CountingSink : ITriggerSink
+    {
+        public int Fired;
+
+        public ValueTask FireAsync(
+            Guid jobId,
+            DateTimeOffset dueUtc,
+            IReadOnlyDictionary<string, string?> payload,
+            CancellationToken ct
+        )
+        {
+            Interlocked.Increment(ref Fired);
+            return default;
+        }
+    }
 }
