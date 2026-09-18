@@ -32,7 +32,7 @@ public sealed class Mediator(ISvcScope scope) : IMediator
             {
                 await h.Handle(@event, ct);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 exceptions ??= [];
                 exceptions.Add(ex);
@@ -89,7 +89,7 @@ public sealed class Mediator(ISvcScope scope) : IMediator
         {
             await subscriber.Handle(@event, ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             exceptions[index] = ex;
         }

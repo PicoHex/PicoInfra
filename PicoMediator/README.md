@@ -239,6 +239,7 @@ Without the generator, `Mediator.Send()` still works via the runtime `GetService
 | Publish — no subscribers | Silent (PUB/SUB semantics) |
 | Publish — one handler throws | Exception propagates to caller |
 | Publish — multiple handlers fail | `AggregateException` |
+| Publish / PublishParallel — handler throws `OperationCanceledException` | Propagates as-is — cancellation is never wrapped in `AggregateException` |
 
 ## Packages
 

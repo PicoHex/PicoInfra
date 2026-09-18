@@ -51,4 +51,60 @@ public class PublishExceptionTests
         await Assert.That(ex).IsTypeOf<AggregateException>();
         await Assert.That(((AggregateException)ex!).InnerExceptions.Count).IsEqualTo(2);
     }
+
+    public sealed class CancellationProbe : ISubscriber<Boom>
+    {
+        public bool Invoked;
+
+        public ValueTask Handle(Boom n, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            Invoked = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    [Test]
+    public async Task Publish_PreCancelledToken_PropagatesOperationCanceled()
+    {
+        // Cancellation is not a handler failure: callers must observe
+        // OperationCanceledException, not an AggregateException wrapping it.
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        var probe = new CancellationProbe();
+        container.RegisterSingle<ISubscriber<Boom>>(probe);
+        container.Build();
+        await using var scope = container.CreateScope();
+        var mediator = new Mediator(scope);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAsync(async () =>
+            await mediator.Publish(new Boom(), cts.Token)
+        );
+
+        await Assert.That(ex).IsTypeOf<OperationCanceledException>();
+        await Assert.That(probe.Invoked).IsFalse();
+    }
+
+    [Test]
+    public async Task PublishParallel_PreCancelledToken_PropagatesOperationCanceled()
+    {
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        var probe = new CancellationProbe();
+        container.RegisterSingle<ISubscriber<Boom>>(probe);
+        container.Build();
+        await using var scope = container.CreateScope();
+        var mediator = new Mediator(scope);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAsync(async () =>
+            await mediator.PublishParallel(new Boom(), cts.Token)
+        );
+
+        await Assert.That(ex).IsTypeOf<OperationCanceledException>();
+        await Assert.That(probe.Invoked).IsFalse();
+    }
 }

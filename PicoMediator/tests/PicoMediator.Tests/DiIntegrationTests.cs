@@ -38,7 +38,7 @@ public class DiIntegrationTests
         container.Build();
 
         await using var scope = container.CreateScope();
-        var mediator = scope.GetService<IMediator>();
+        var mediator = scope.GetService<IMediator>()!;
 
         // No handler class exists for this request type anywhere in the test
         // assembly, so auto-registration cannot provide one. The failure must
@@ -48,6 +48,6 @@ public class DiIntegrationTests
             await mediator.Send<UnhandledPing, string>(new UnhandledPing())
         );
         await Assert.That(ex).IsTypeOf<InvalidOperationException>();
-        await Assert.That(ex.Message).Contains("No handler registered for");
+        await Assert.That(ex!.Message).Contains("No handler registered for");
     }
 }
