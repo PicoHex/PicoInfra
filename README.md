@@ -434,7 +434,7 @@ var mediator = scope.GetService<IMediator>();
 | Package | Description |
 |---|---|
 | **PicoDI** | Zero-reflection DI container |
-| **PicoDI.Abs** | Abstractions (`ISvcContainer`, `ISvcScope`, `SvcDescriptor`) + embedded registration generator |
+| **PicoDI.Abs** | Abstractions (`ISvcContainer`, `ISvcScope`, `SvcDescriptor`, `SourceGeneratorRequiredException`) + embedded registration generator |
 
 ### AOP
 | Package | Description |

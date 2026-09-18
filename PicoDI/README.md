@@ -353,7 +353,7 @@ PicoDI is designed for concurrent use:
 | Package | Description |
 |---|---|
 | **PicoDI** | DI container runtime |
-| **PicoDI.Abs** | Abstractions: `ISvcContainer`, `ISvcScope`, `SvcDescriptor`, `SvcLifetime`, `IHostedSvc`, `BackgroundSvc` |
+| **PicoDI.Abs** | Abstractions: `ISvcContainer`, `ISvcScope`, `SvcDescriptor`, `SvcLifetime`, `IHostedSvc`, `BackgroundSvc`, `SourceGeneratorRequiredException` |
 | **PicoDI.Gen** | Roslyn source generator + diagnostic analyzer (**embedded** in PicoDI.Abs — no separate reference needed) |
 
 [← Back to PicoInfra](../README.md)

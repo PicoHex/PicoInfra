@@ -124,7 +124,7 @@ public class HostBuilderTests
         await builder.BuildAsync();
 
         await Assert
-            .That(() => builder.BuildAsync())
+            .That(async () => await builder.BuildAsync())
             .Throws<InvalidOperationException>()
             .WithMessage("Build has already been called.");
     }
@@ -165,7 +165,9 @@ public class HostBuilderTests
             );
         });
 
-        await Assert.That(() => builder.BuildAsync()).Throws<InvalidOperationException>();
+        await Assert
+            .That(async () => await builder.BuildAsync())
+            .Throws<InvalidOperationException>();
 
         // Bug 1: without fix, the container is leaked and StopAsync is never called.
         // The first hosted service was started but never stopped.
