@@ -350,6 +350,107 @@ public class CfgRootTests
         await Assert.That(root.GetValue("shared")).IsEqualTo("second");
     }
 
+    [Test]
+    public async Task Dispose_WithStuckReload_DoesNotFaultTheReload()
+    {
+        // Mechanism: disposal must not destroy the reload gate while a
+        // non-cooperative reload still holds it — its Release() would throw
+        // ObjectDisposedException and mask the reload's real outcome.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = new BlockingProvider(release.Task);
+        var root = TestCfgFactory.CreateRoot(
+            [provider],
+            reloadDrainTimeout: TimeSpan.FromMilliseconds(50),
+            reloadDrainRetryTimeout: TimeSpan.FromMilliseconds(50)
+        );
+
+        var reload = root.ReloadAsync().AsTask();
+        await provider.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); // reload holds the gate
+        await root.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        release.TrySetResult();
+        Exception? failure = null;
+        try
+        {
+            await reload.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure is ObjectDisposedException).IsFalse();
+    }
+
+    private sealed class BlockingProvider(Task release) : ICfgProvider
+    {
+        public readonly TaskCompletionSource Entered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public ICfgSnapshot Snapshot { get; } = new EmptySnapshot();
+
+        public async ValueTask<bool> ReloadAsync(CancellationToken ct = default)
+        {
+            Entered.TrySetResult();
+            await release.ConfigureAwait(false); // deliberately ignores cancellation
+            return false;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class EmptySnapshot : ICfgSnapshot
+    {
+        public bool TryGetValue(string path, out string? value)
+        {
+            value = null;
+            return false;
+        }
+
+        public IReadOnlyDictionary<string, string> GetAllValues() =>
+            new Dictionary<string, string>();
+    }
+
+    [Test]
+    public async Task CompositeSnapshot_MixedCaseDuplicateKeys_ResolveWithCaseInsensitivePrecedence()
+    {
+        // Custom (non-native) snapshots go through the composite fallback. Keys
+        // that differ only by case must resolve with case-insensitive precedence
+        // (the later provider wins) regardless of which case the caller asks for.
+        var lower = new CaseSensitiveProvider(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["KEY"] = "low" }
+        );
+        var higher = new CaseSensitiveProvider(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Key"] = "high" }
+        );
+        var root = TestCfgFactory.CreateRoot([lower, higher]); // later provider wins
+
+        await Assert.That(root.GetValue("KEY")).IsEqualTo("high");
+        await Assert.That(root.GetValue("Key")).IsEqualTo("high");
+        await Assert.That(root.GetValue("key")).IsEqualTo("high");
+    }
+
+    private sealed class CaseSensitiveProvider(IReadOnlyDictionary<string, string> values)
+        : ICfgProvider
+    {
+        public ICfgSnapshot Snapshot { get; } = new CaseSensitiveSnapshot(values);
+
+        public ValueTask<bool> ReloadAsync(CancellationToken ct = default) =>
+            ValueTask.FromResult(false);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class CaseSensitiveSnapshot(IReadOnlyDictionary<string, string> values)
+        : ICfgSnapshot
+    {
+        public bool TryGetValue(string path, out string? value) =>
+            values.TryGetValue(path, out value);
+
+        public IReadOnlyDictionary<string, string> GetAllValues() => values;
+    }
+
     private sealed class MockProvider : ICfgProvider
     {
         private readonly IReadOnlyList<IReadOnlyDictionary<string, string>> _snapshots;
@@ -826,7 +927,7 @@ public class CfgRootTests
             await root.ReloadAsync()
         );
 
-        await Assert.That(ex.Message).Contains("Simulated reload failure");
+        await Assert.That(ex!.Message).Contains("Simulated reload failure");
         await Assert.That(root.GetValue("p1")).IsEqualTo("v1b");
         await Assert.That(root.GetValue("p2")).IsEqualTo("v2b");
 

@@ -7,7 +7,9 @@ public static class CfgEnumerationExtensions
 {
     /// <summary>
     /// Returns all key-value pairs from the configuration view.
-    /// Keys are merged in provider order — later providers override earlier ones.
+    /// Keys are merged in provider order — later providers override earlier ones,
+    /// and keys are matched case-insensitively (one entry per key, so enumeration
+    /// agrees with lookup).
     /// When the view wraps an <see cref="ICfgSnapshot"/>, all keys from that
     /// snapshot are returned. External <see cref="ICfg"/> implementations that do
     /// not implement <see cref="ICfgSnapshot"/> return an empty dictionary.

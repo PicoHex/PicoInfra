@@ -106,7 +106,9 @@ internal static class TestCfgFactory
     public static CfgRoot CreateRoot(
         IEnumerable<ICfgProvider> providers,
         Func<IReadOnlyList<ICfgSnapshot>, ICfgSnapshot>? snapshotComposer = null,
-        Func<CfgChangeSignal>? changeSignalFactory = null
+        Func<CfgChangeSignal>? changeSignalFactory = null,
+        TimeSpan? reloadDrainTimeout = null,
+        TimeSpan? reloadDrainRetryTimeout = null
     )
     {
         return new CfgRoot(
@@ -119,7 +121,9 @@ internal static class TestCfgFactory
                             (values, fingerprint) => new CfgSnapshot(values, fingerprint)
                         )
                 ),
-            changeSignalFactory ?? (static () => new CfgChangeSignal())
+            changeSignalFactory ?? (static () => new CfgChangeSignal()),
+            reloadDrainTimeout,
+            reloadDrainRetryTimeout
         );
     }
 

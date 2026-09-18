@@ -13,6 +13,8 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Func<IReadOnlyList<ICfgSnapshot>, ICfgSnapshot> _snapshotComposer;
     private readonly Func<CfgChangeSignal> _changeSignalFactory;
+    private readonly TimeSpan _reloadDrainTimeout;
+    private readonly TimeSpan _reloadDrainRetryTimeout;
     private readonly List<ICfgProvider> _providers;
     private ICfgSnapshot[] _providerSnapshots;
     private ICfgSnapshot _snapshot;
@@ -23,7 +25,9 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
     internal CfgRoot(
         IEnumerable<ICfgProvider> providers,
         Func<IReadOnlyList<ICfgSnapshot>, ICfgSnapshot> snapshotComposer,
-        Func<CfgChangeSignal> changeSignalFactory
+        Func<CfgChangeSignal> changeSignalFactory,
+        TimeSpan? reloadDrainTimeout = null,
+        TimeSpan? reloadDrainRetryTimeout = null
     )
     {
         ArgumentNullException.ThrowIfNull(providers);
@@ -31,6 +35,8 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
         ArgumentNullException.ThrowIfNull(changeSignalFactory);
         _snapshotComposer = snapshotComposer;
         _changeSignalFactory = changeSignalFactory;
+        _reloadDrainTimeout = reloadDrainTimeout ?? TimeSpan.FromSeconds(10);
+        _reloadDrainRetryTimeout = reloadDrainRetryTimeout ?? TimeSpan.FromSeconds(5);
         _providers = [.. providers];
         _providerSnapshots = [.. _providers.Select(static provider => provider.Snapshot)];
         _snapshot = _snapshotComposer(_providerSnapshots);
@@ -101,10 +107,10 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
         _disposeCts.Cancel();
 
         // Wait for any in-flight reload to settle. The cancellation above unblocks
-        // cooperative providers. The timeout is a safety cap for non-cooperative ones;
-        // when exceeded, we wait without a deadline for the reload to release the gate
-        // (disposing a held SemaphoreSlim causes ObjectDisposedException in the reload).
-        var entered = await _reloadGate.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+        // cooperative providers; the bounded waits are a safety cap for
+        // non-cooperative ones (see the finally block for what happens when even
+        // the retry times out).
+        var entered = await _reloadGate.WaitAsync(_reloadDrainTimeout, CancellationToken.None);
         try
         {
             List<Exception>? exceptions = null;
@@ -132,25 +138,22 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
         }
         finally
         {
+            var drained = entered;
             if (entered)
             {
                 _reloadGate.Release();
             }
             else
             {
-                // Timeout: a non-cooperative reload is still holding the gate.
-                // Wait for it to release before disposing to avoid
-                // ObjectDisposedException in the reload's finally block.
-                //
-                // Use a secondary timeout so that even a truly stuck provider
-                // (one that ignores the primary 10s timeout AND cancellation)
-                // cannot block disposal indefinitely.
+                // A non-cooperative reload still owns the gate. One bounded
+                // secondary wait reduces the window; if even that fails, the
+                // gate stays with its owner (see below).
                 try
                 {
-                    bool secondaryEntered = await _reloadGate
-                        .WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None)
+                    drained = await _reloadGate
+                        .WaitAsync(_reloadDrainRetryTimeout, CancellationToken.None)
                         .ConfigureAwait(false);
-                    if (secondaryEntered)
+                    if (drained)
                     {
                         _reloadGate.Release();
                     }
@@ -158,6 +161,7 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
                 catch (ObjectDisposedException)
                 {
                     // Already disposed by someone else.
+                    drained = true;
                 }
                 catch (OperationCanceledException)
                 {
@@ -165,8 +169,20 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
                     // defensive — proceed with disposal.
                 }
             }
-            _disposeCts.Dispose();
-            _reloadGate.Dispose();
+
+            if (drained)
+            {
+                _disposeCts.Dispose();
+                _reloadGate.Dispose();
+            }
+            else
+            {
+                // Not drained: a stuck reload still holds the gate and its token
+                // chain. Disposing them would fault that reload with
+                // ObjectDisposedException on Release() and mask its real outcome.
+                // Leave both to the GC — SemaphoreSlim holds no unmanaged
+                // resources when only WaitAsync is used.
+            }
         }
     }
 

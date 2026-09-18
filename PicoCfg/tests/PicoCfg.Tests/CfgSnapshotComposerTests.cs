@@ -171,6 +171,236 @@ public class CfgSnapshotComposerTests
         return snapshot.TryGetValue(path, out var value) ? value : null;
     }
 
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_BuildsCaseInsensitiveViewsOnce()
+    {
+        // The fallback resolves case-insensitively per provider; those
+        // per-provider views must be built once, not re-enumerated per lookup.
+        ICfgSnapshot lower = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["KEY"] = "low" }
+        );
+        ICfgSnapshot higher = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["Key"] = "high" }
+        );
+        var snapshot = CfgSnapshotComposer.CreateSnapshot([lower, higher], CreateSnapshot);
+
+        await Assert.That(GetValue(snapshot, "key")).IsEqualTo("high");
+        for (var i = 0; i < 3; i++)
+            await Assert.That(GetValue(snapshot, "absent")).IsNull();
+
+        var composite = (CfgSnapshotComposer.CompositeCfgSnapshot)snapshot;
+        await Assert.That(composite.ProviderValuePasses).IsEqualTo(2); // one pass per provider
+    }
+
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_ExactHitsDoNotBuildViews()
+    {
+        // The common exact-hit path must not pay for case-insensitive views: they
+        // are only needed when a lookup misses exactly within a provider.
+        ICfgSnapshot lower = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["shared"] = "low" }
+        );
+        ICfgSnapshot higher = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["shared"] = "high" }
+        );
+        var snapshot = CfgSnapshotComposer.CreateSnapshot([lower, higher], CreateSnapshot);
+
+        await Assert.That(GetValue(snapshot, "shared")).IsEqualTo("high");
+
+        var composite = (CfgSnapshotComposer.CompositeCfgSnapshot)snapshot;
+        await Assert.That(composite.ProviderValuePasses).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_MergesValuesCaseInsensitively()
+    {
+        // Enumeration must agree with lookup: one logical entry per
+        // case-insensitive key, with the highest-precedence provider winning
+        // both the key text and the value.
+        ICfgSnapshot lower = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["KEY"] = "low" }
+        );
+        ICfgSnapshot higher = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["Key"] = "high" }
+        );
+        var snapshot = CfgSnapshotComposer.CreateSnapshot([lower, higher], CreateSnapshot);
+
+        var all = snapshot.GetAllValues();
+        await Assert.That(all.Count).IsEqualTo(1);
+        await Assert.That(all.Keys.Single()).IsEqualTo("Key");
+        await Assert.That(all["KEY"]).IsEqualTo("high");
+    }
+
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_ConcurrentFirstMiss_BuildsViewOnce()
+    {
+        // Exact-once view construction: a second concurrent first miss inside the
+        // same provider must wait for the in-flight build, not enumerate again.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var probe = new BlockingEnumerableSnapshot(
+            new Dictionary<string, string> { ["Key"] = "high" },
+            release.Task
+        );
+        ICfgSnapshot other = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["other"] = "x" }
+        );
+        var snapshot = CfgSnapshotComposer.CreateSnapshot([other, probe], CreateSnapshot);
+
+        var first = Task.Run(() => GetValue(snapshot, "key"));
+        await probe.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); // first enumeration in flight
+
+        // Release shortly after the second call blocks. The release delay only
+        // controls when the blocked call proceeds; no assertion depends on it.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(100);
+            release.TrySetResult();
+        });
+
+        // Runs on the test thread: a correct slot blocks here until release and
+        // reuses the published view; a duplicate build would enumerate again now.
+        var second = GetValue(snapshot, "key");
+
+        await Assert.That(probe.EnumerationCount).IsEqualTo(1);
+        await Assert.That(await first).IsEqualTo("high");
+        await Assert.That(second).IsEqualTo("high");
+    }
+
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_TransientEnumerationFailure_IsRetried()
+    {
+        // A failed view build must not poison the provider: the next lookup retries
+        // (Lazy caches factory exceptions and would rethrow them forever).
+        ICfgSnapshot flaky = new FlakyEnumerableSnapshot(
+            new Dictionary<string, string> { ["Key"] = "high" },
+            failuresBeforeSuccess: 1
+        );
+        ICfgSnapshot other = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["other"] = "x" }
+        );
+        var snapshot = CfgSnapshotComposer.CreateSnapshot([other, flaky], CreateSnapshot);
+
+        await Assert.That(() => GetValue(snapshot, "key")).Throws<InvalidOperationException>();
+
+        // the failure was transient — the next lookup must retry, not rethrow
+        Exception? retryFailure = null;
+        string? value = null;
+        try
+        {
+            value = GetValue(snapshot, "key");
+        }
+        catch (Exception ex)
+        {
+            retryFailure = ex;
+        }
+
+        await Assert.That(retryFailure).IsNull();
+        await Assert.That(value).IsEqualTo("high");
+    }
+
+    [Test]
+    public async Task CreateSnapshot_WithCompositeFallback_ReentrantEnumeration_FailsFast()
+    {
+        // A provider whose GetAllValues() resolves through the snapshot that
+        // contains it must fail fast with a clear exception instead of recursing
+        // until the stack overflows. Re-entry depth is bounded so the test itself
+        // cannot crash the process.
+        ICfgSnapshot[] holder = new ICfgSnapshot[1];
+        ICfgSnapshot reentrant = new ReentrantEnumerableSnapshot(
+            new Dictionary<string, string> { ["Key"] = "high" },
+            () => holder[0].TryGetValue("key", out _),
+            reentries: 5
+        );
+        ICfgSnapshot other = new EnumerableSnapshot(
+            new Dictionary<string, string> { ["other"] = "x" }
+        );
+        holder[0] = CfgSnapshotComposer.CreateSnapshot([other, reentrant], CreateSnapshot);
+
+        Exception? failure = null;
+        try
+        {
+            _ = GetValue(holder[0], "key");
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+
+        await Assert.That(failure).IsTypeOf<InvalidOperationException>();
+        await Assert.That(failure!.Message).Contains("Re-entrant");
+    }
+
+    private sealed class ReentrantEnumerableSnapshot(
+        IReadOnlyDictionary<string, string> values,
+        Func<bool> reenter,
+        int reentries
+    ) : ICfgSnapshot
+    {
+        private int _remainingReentries = reentries;
+
+        public bool TryGetValue(string path, out string? value) =>
+            values.TryGetValue(path, out value); // exact lookup never hits the queried key
+
+        public IReadOnlyDictionary<string, string> GetAllValues()
+        {
+            if (_remainingReentries-- > 0)
+                _ = reenter(); // resolves through the composite that contains this provider
+            return values;
+        }
+    }
+
+    private sealed class FlakyEnumerableSnapshot(
+        IReadOnlyDictionary<string, string> values,
+        int failuresBeforeSuccess
+    ) : ICfgSnapshot
+    {
+        private int _enumerations;
+
+        public bool TryGetValue(string path, out string? value) =>
+            values.TryGetValue(path, out value);
+
+        public IReadOnlyDictionary<string, string> GetAllValues()
+        {
+            if (Interlocked.Increment(ref _enumerations) <= failuresBeforeSuccess)
+                throw new InvalidOperationException("transient enumeration failure");
+            return values;
+        }
+    }
+
+    private sealed class BlockingEnumerableSnapshot(
+        IReadOnlyDictionary<string, string> values,
+        Task release
+    ) : ICfgSnapshot
+    {
+        private int _enumerations;
+
+        public readonly TaskCompletionSource Entered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public int EnumerationCount => Volatile.Read(ref _enumerations);
+
+        public bool TryGetValue(string path, out string? value) =>
+            values.TryGetValue(path, out value);
+
+        public IReadOnlyDictionary<string, string> GetAllValues()
+        {
+            Interlocked.Increment(ref _enumerations);
+            Entered.TrySetResult();
+            release.GetAwaiter().GetResult(); // GetAllValues is synchronous
+            return values;
+        }
+    }
+
+    private sealed class EnumerableSnapshot(IReadOnlyDictionary<string, string> values)
+        : ICfgSnapshot
+    {
+        public bool TryGetValue(string path, out string? value) =>
+            values.TryGetValue(path, out value);
+
+        public IReadOnlyDictionary<string, string> GetAllValues() => values;
+    }
+
     private sealed class DelegatingSnapshot(Func<string, string?> resolver) : ICfgSnapshot
     {
         public bool TryGetValue(string path, out string? value)
