@@ -41,3 +41,37 @@ if [ "$workflow_targets" != "$script_targets" ]; then
 fi
 
 echo "OK: $(printf '%s\n' "$workflow_targets" | wc -l | tr -d ' ') pack targets in parity"
+
+# Test-target parity: the local gate must run the same test projects as CI.
+# Drift here is silent too — the script once missed PicoSchedule tests while
+# release.yml ran them, so a local release could skip the newest module's suite.
+extract_workflow_tests() {
+    grep -oE 'dotnet test --project [^ ]+\.csproj' "$workflow_file" |
+        sed -E 's/^dotnet test --project //' |
+        tr '\\' '/' |
+        sort -u
+}
+
+extract_script_tests() {
+    grep -oE '"[^"]+/tests/[^"]+\.csproj"' "$script_file" |
+        sed -E 's/^"//; s/"$//' |
+        tr '\\' '/' |
+        sort -u
+}
+
+workflow_tests="$(extract_workflow_tests)"
+script_tests="$(extract_script_tests)"
+
+if [ -z "$workflow_tests" ]; then
+    echo "::error::no 'dotnet test' targets found in $workflow_file"
+    exit 1
+fi
+
+if [ "$workflow_tests" != "$script_tests" ]; then
+    echo "::error::release.ps1 and release.yml test different project sets"
+    echo "--- release.yml (left) vs release.ps1 (right) ---"
+    diff <(printf '%s\n' "$workflow_tests") <(printf '%s\n' "$script_tests") || true
+    exit 1
+fi
+
+echo "OK: $(printf '%s\n' "$workflow_tests" | wc -l | tr -d ' ') test targets in parity"

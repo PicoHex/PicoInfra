@@ -69,7 +69,8 @@ try {
             "PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj",
             "PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj",
             "PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj",
-            "PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj"
+            "PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj",
+            "PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj"
         )
         foreach ($project in $testProjects) {
             Write-Host "  -> $project" -ForegroundColor DarkGray
