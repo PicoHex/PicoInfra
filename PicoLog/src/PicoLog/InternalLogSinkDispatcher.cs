@@ -54,11 +54,6 @@ internal sealed class InternalLogSinkDispatcher : IDisposable
             {
                 // Fast sinks always return a completed task — safe to call synchronously
                 sink.WriteAsync(entry).GetAwaiter().GetResult();
-                if (sink is IBatchingLogSink)
-                {
-                    // Single-entry batch dispatch not needed for sync path —
-                    // the fast path skips the queue entirely so entries are never batched.
-                }
             }
             catch (Exception ex)
             {

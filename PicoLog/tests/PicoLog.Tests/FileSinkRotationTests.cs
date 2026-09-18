@@ -154,6 +154,118 @@ public class FileSinkRotationTests
             TryDelete(f);
     }
 
+    [Test]
+    public async Task Rotation_Cleanup_DoesNotDeleteForeignFilesMatchingTheGlob()
+    {
+        // Retention cleanup must only delete files the sink itself produced
+        // ({name}.{n}{ext}, n >= 1). A foreign "app.error.log" matches the
+        // "{name}.*{ext}" glob and used to parse as index 0 — so it sorted
+        // first and was deleted before any real rotated file.
+        var directory = Path.Combine(Path.GetTempPath(), $"pico-rotate-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var filePath = Path.Combine(directory, "app.log");
+        var foreignPath = Path.Combine(directory, "app.error.log");
+        File.WriteAllText(foreignPath, "foreign file — must survive retention cleanup");
+
+        var sink = new FileSink(
+            new ConsoleFormatter(),
+            new FileSinkOptions
+            {
+                FilePath = filePath,
+                MaxFileSizeBytes = 32, // every formatted line exceeds this -> rotates
+                MaxRetainedFiles = 1,
+            }
+        );
+
+        for (var i = 0; i < 4; i++)
+        {
+            await sink.WriteAsync(CreateEntry($"rotation-{i}"));
+            await sink.FlushAsync(); // rotation runs at the end of every batch
+        }
+        await sink.DisposeAsync();
+
+        await Assert.That(File.Exists(foreignPath)).IsTrue();
+
+        var rotated = Directory
+            .GetFiles(directory, "app.*.log")
+            .Where(f => !string.Equals(f, foreignPath, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        await Assert.That(rotated.Count).IsEqualTo(1); // MaxRetainedFiles = 1
+
+        foreach (var f in Directory.GetFiles(directory))
+            TryDelete(f);
+        try
+        {
+            Directory.Delete(directory);
+        }
+        catch
+        { /* best-effort cleanup */
+        }
+    }
+
+    [Test]
+    public async Task ConcurrentWritesAndFlushes_ProduceEveryLine()
+    {
+        // The sink participates in the flush protocol: concurrent writers and
+        // flushes must neither throw nor lose/corrupt lines (the processing task
+        // and FlushAsync share the non-thread-safe StreamWriter).
+        var filePath = GetTempFilePath();
+        var sink = new FileSink(
+            new ConsoleFormatter(),
+            new FileSinkOptions { FilePath = filePath, BatchSize = 8 }
+        );
+
+        const int writerCount = 4;
+        const int perWriter = 100;
+        const int total = writerCount * perWriter;
+
+        var writers = Enumerable
+            .Range(0, writerCount)
+            .Select(w =>
+                Task.Run(async () =>
+                {
+                    for (var i = 0; i < perWriter; i++)
+                    {
+                        await sink.WriteAsync(CreateEntry($"w{w}-{i}"));
+                        if (i % 25 == 0)
+                            await sink.FlushAsync();
+                    }
+                })
+            )
+            .ToArray();
+        var flusher = Task.Run(async () =>
+        {
+            for (var i = 0; i < 40; i++)
+            {
+                await sink.FlushAsync();
+                await Task.Yield();
+            }
+        });
+
+        await Task.WhenAll(writers);
+        await flusher;
+        await sink.FlushAsync();
+        await sink.DisposeAsync();
+
+        var lines = await File.ReadAllLinesAsync(filePath);
+        await Assert.That(lines.Length).IsEqualTo(total);
+
+        // every expected message appears exactly once (the formatter appends the
+        // message after the last "] ")
+        var actual = lines
+            .Select(l => l[(l.LastIndexOf(']') + 2)..])
+            .OrderBy(m => m, StringComparer.Ordinal)
+            .ToList();
+        var expected = Enumerable
+            .Range(0, writerCount)
+            .SelectMany(w => Enumerable.Range(0, perWriter).Select(i => $"w{w}-{i}"))
+            .OrderBy(m => m, StringComparer.Ordinal)
+            .ToList();
+        await Assert.That(string.Join('|', actual)).IsEqualTo(string.Join('|', expected));
+
+        TryDelete(filePath);
+    }
+
     private static void TryDelete(string path)
     {
         try

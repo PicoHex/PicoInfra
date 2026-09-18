@@ -75,6 +75,12 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
 
         var message = _formatter.Format(entry);
 
+        // Participate in the flush protocol: a pending flush blocks new writes
+        // until it has drained and flushed, so the processing task never touches
+        // the (non-thread-safe) StreamWriter concurrently with FlushAsync.
+        await _flushQuiesceCoordinator
+            .EnterWriteOperationAsync(cancellationToken)
+            .ConfigureAwait(false);
         try
         {
             await _channel.Writer.WriteAsync(message, cancellationToken).ConfigureAwait(false);
@@ -85,6 +91,10 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
             // Writes arriving after channel completion are expected
             // and silently discarded — the entry was already in flight
             // when disposal began.
+        }
+        finally
+        {
+            _flushQuiesceCoordinator.ExitWriteOperation();
         }
     }
 
@@ -256,6 +266,10 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
         var ext = Path.GetExtension(_baseFilePath);
         var rotatedFiles = Directory
             .GetFiles(dir, $"{name}.*{ext}")
+            // Only files THIS sink produced ({name}.{n}{ext}, n >= 1) are subject
+            // to retention. A foreign file matching the glob (e.g. app.error.log)
+            // parses as a non-index and must never be deleted.
+            .Where(f => TryGetRotationIndex(f, name, out _))
             .OrderBy(f => GetRotationIndexFromFile(f, name))
             .ToList();
 
@@ -292,17 +306,24 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
         return maxIndex;
     }
 
-    private static int GetRotationIndexFromFile(string file, string name)
+    private static int GetRotationIndexFromFile(string file, string name) =>
+        TryGetRotationIndex(file, name, out var index) ? index : 0;
+
+    /// <summary>Parses the rotation index from a "{name}.{n}{ext}" file name.
+    /// Returns false for anything that is not a sink-produced rotated file
+    /// (missing prefix, non-numeric suffix, or index below 1).</summary>
+    private static bool TryGetRotationIndex(string file, string name, out int index)
     {
+        index = 0;
         var fileName = Path.GetFileNameWithoutExtension(file);
         if (
             fileName.Length <= name.Length
             || !fileName.StartsWith(name + ".", StringComparison.Ordinal)
         )
-            return 0;
+            return false;
 
         var suffix = fileName[(name.Length + 1)..];
-        return int.TryParse(suffix, out var index) ? index : 0;
+        return int.TryParse(suffix, out index) && index > 0;
     }
 
     public async ValueTask DisposeAsync()

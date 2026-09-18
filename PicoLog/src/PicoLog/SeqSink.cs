@@ -1,5 +1,12 @@
 namespace PicoLog;
 
+/// <summary>Batched sink that ships log entries to a Seq server over HTTP.
+/// </summary>
+/// <remarks>
+/// <b>Ownership:</b> the supplied <see cref="HttpClient"/> is a caller-owned
+/// dependency — the sink never disposes it, so DI / <c>IHttpClientFactory</c>
+/// clients can be shared across sinks and other consumers.
+/// </remarks>
 public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
 {
     private const int MaxBatchEntries = 100;
@@ -17,11 +24,23 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
     private readonly int _retryBaseDelayMs;
     private readonly CancellationTokenSource _timerCts = new();
     private readonly Task _timerTask;
+
+    // Serializes threshold-triggered fire-and-forget drains and lets DisposeAsync
+    // wait for one in flight before disposing the HttpClient mid-request.
+    private readonly SemaphoreSlim _thresholdDrainGate = new(1, 1);
     private long _bufferBytes;
     private long _failureCount;
     private long _lastFailureTicks;
     private readonly bool _enableConsoleFallback;
     private int _disposed;
+
+    // Guards admission after disposal: set under _bufferLock by DisposeAsync so a
+    // write racing disposal cannot buffer entries nothing would ever drain.
+    private bool _closed;
+
+    /// <summary>TEST HOOK — writes rejected because the sink was already closed.
+    /// Instance-scoped so tests do not observe the process-wide metric counter.</summary>
+    internal long RejectedAfterClose;
 
     public long FailureCount => Interlocked.Read(ref _failureCount);
     public DateTimeOffset? LastFailureTime =>
@@ -113,15 +132,42 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
             await _timerTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
+
+        // Close admission BEFORE the final flush: entries accepted up to this
+        // point are drained by the flush below; writes racing disposal are
+        // rejected and counted instead of landing in a buffer nothing would
+        // ever drain (the timer is cancelled and the gate wait only covers
+        // already-started drains).
+        lock (_bufferLock)
+            _closed = true;
+
         await FlushAsync().ConfigureAwait(false);
+
+        // The size-threshold drain is fire-and-forget: wait for an in-flight
+        // send so the batch it already took is not abandoned. Closing admission
+        // above guarantees no new drain can start, so after this handshake the
+        // gate has no users left and can be disposed.
+        await _thresholdDrainGate.WaitAsync().ConfigureAwait(false);
+        _thresholdDrainGate.Release();
+        _thresholdDrainGate.Dispose();
+
         _timerCts.Dispose();
-        _httpClient.Dispose();
+        // The HttpClient is caller-owned and deliberately NOT disposed here.
     }
 
     private void BufferEntries(IReadOnlyList<LogEntry> entries)
     {
         lock (_bufferLock)
         {
+            if (_closed)
+            {
+                // Disposal already flushed and will never drain again; reject
+                // explicitly (visible in metrics) instead of buffering forever.
+                RejectedAfterClose++;
+                PicoLogMetrics.RecordRejectedAfterShutdown();
+                return;
+            }
+
             foreach (var entry in entries)
             {
                 _buffer.Add(entry);
@@ -142,7 +188,15 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
     {
         try
         {
-            await DrainAndSendAsync().ConfigureAwait(false);
+            await _thresholdDrainGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await DrainAndSendAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                _thresholdDrainGate.Release();
+            }
         }
         catch (Exception ex)
         {
