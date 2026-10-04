@@ -344,7 +344,9 @@ container.OnError = (ex, context) =>
 PicoDI is designed for concurrent use:
 
 - **Registration**: Serialized under lock. Must complete before `Build()`.
-- **`Build()`**: Idempotent. Freezes registration cache into lock-free `FrozenDictionary`.
+- **`Build()`**: Idempotent, and serialized per container by a dedicated build gate. Freezes the registration cache into a lock-free `FrozenDictionary`; later calls are a no-op.
+- **Lazy build**: With `autoConfigureFromGenerator: true` (the default) the container may never be built explicitly — the first `CreateScope()` / `GetImplicitRootScope()` triggers `Build()`. Concurrent first callers wait on the build gate, so no caller can freeze the container while the deferred source-generator configurators are still calling `Register()`.
+- **Deferred auto-configuration**: Generator configurators run outside the registration lock (they call `Register()`) but inside the build gate; `Register()` takes only the registration lock, so the gate → registration lock order cannot self-deadlock.
 - **Resolution**: Lock-free reads. Singleton creation uses deadlock-safe double-checked locking. Scoped instances use `ConcurrentDictionary` + `Lazy<T>`.
 - **Disposal**: Idempotent. `DisposeAsync()` can be called concurrently and multiple times safely.
 

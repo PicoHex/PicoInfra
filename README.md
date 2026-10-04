@@ -73,6 +73,7 @@ var svc = scope.GetService<IService>();
 **Key design decisions discovered in source:**
 
 - **Registration → Freeze → Resolve** — `Register()` fills a `Dictionary<Type, List<SvcRuntimeRegistration>>`; `Build()` freezes it into a `FrozenDictionary<Type, SvcRuntimeRegistration[]>` for O(1) lookup.
+- **Serialized lazy build** — when the container is never built explicitly (the `autoConfigureFromGenerator: true` default), the first `CreateScope()` builds it under a per-container build gate. The deferred source-generator configurators run inside that gate but outside the registration lock, so concurrent first scope creation cannot freeze the container mid-`Register()`.
 - **Three resolution tiers** — (1) Single-singleton fast path via `Volatile.Read` pair (~2ns), (2) multi-singleton `Dictionary+lock` (~20ns), (3) lifetime-aware dispatch for scoped/transient.
 - **Deadlock-safe singleton creation** — Factory is invoked **outside** the lock; duplicate creations from contended threads are disposed (factories must be idempotent).
 - **LIFO disposal** — Singleton and scoped instances track `CreationOrder` and dispose in reverse order so dependencies outlive dependents.
