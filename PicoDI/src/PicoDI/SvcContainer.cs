@@ -12,6 +12,19 @@ public sealed partial class SvcContainer : ISvcContainer
     private Dictionary<Type, List<SvcRuntimeRegistration>>? _registrationCache;
 
     private readonly Lock _registrationLock = new();
+
+    /// <summary>
+    /// End-to-end mutex for <see cref="Build"/>: it covers both the deferred
+    /// configurator run and the freeze. Without it a concurrent lazy build via
+    /// <see cref="CreateScope"/>/<see cref="GetImplicitRootScope"/> could skip the
+    /// (already-marked) configurators, freeze the container, and then make the
+    /// in-flight configurator's <see cref="Register"/> calls throw.
+    /// Lock order is always <see cref="_buildLock"/> → <see cref="_registrationLock"/>
+    /// (Register only ever takes the latter), so configurators calling Register
+    /// while the build gate is held cannot self-deadlock.
+    /// </summary>
+    private readonly Lock _buildLock = new();
+
     private readonly TrackedScopeList _rootScopes = new();
 
     /// <summary>

@@ -44,35 +44,53 @@ public sealed partial class SvcContainer
     {
         DisposalGuards.ThrowIfDisposed(ref _disposed, nameof(SvcContainer));
 
-        // Apply DEFERRED source-generated configurators HERE (immediate ones ran in
-        // the constructor): manual registrations made before Build must win over
-        // generated ones (the configurators dedup per service type). An explicit
-        // apply such as AddPicoMediator() may already have marked the deferred set;
-        // TryApplyDeferred is once-per-container, so this is a no-op in that case.
-        ApplyDeferredAutoConfigurationIfEnabled();
-
-        lock (_registrationLock)
+        // The build gate spans BOTH the deferred configurator run and the freeze.
+        // CreateScope()/GetImplicitRootScope() call Build() lazily, so without the
+        // gate a second concurrent caller could observe the deferred group already
+        // marked "applied" (GeneratorConfiguratorRegistry marks before running),
+        // skip the configurators, freeze the container — and the still-running
+        // configurator's next Register() would throw
+        // "Cannot register services after Build() has been called".
+        // Configurators keep running OUTSIDE the registry lock (loader-lock
+        // deadlock regression); _buildLock is a container-local gate, not the
+        // registry lock.
+        lock (_buildLock)
         {
-            if (_frozenCache != null)
+            // Re-check under the gate: a concurrent Build() may have completed
+            // while this caller was waiting, in which case there is nothing to do.
+            if (Volatile.Read(ref _frozenCache) != null)
                 return;
 
-            var cache =
-                _registrationCache
-                ?? throw new InvalidOperationException(
-                    "Cannot build after the container has been finalized. "
-                        + "Register all services before calling Build()."
+            // Apply DEFERRED source-generated configurators HERE (immediate ones ran in
+            // the constructor): manual registrations made before Build must win over
+            // generated ones (the configurators dedup per service type). An explicit
+            // apply such as AddPicoMediator() may already have marked the deferred set;
+            // TryApplyDeferred is once-per-container, so this is a no-op in that case.
+            ApplyDeferredAutoConfigurationIfEnabled();
+
+            lock (_registrationLock)
+            {
+                if (_frozenCache != null)
+                    return;
+
+                var cache =
+                    _registrationCache
+                    ?? throw new InvalidOperationException(
+                        "Cannot build after the container has been finalized. "
+                            + "Register all services before calling Build()."
+                    );
+
+                // Validate before freezing so a failed Build can be retried.
+                TrackHostedServicesFromRegistrations(cache);
+
+                // Convert lists to arrays for frozen storage.
+                var frozenCache = cache.ToFrozenDictionary(
+                    static kvp => kvp.Key,
+                    static kvp => kvp.Value.ToArray()
                 );
-
-            // Validate before freezing so a failed Build can be retried.
-            TrackHostedServicesFromRegistrations(cache);
-
-            // Convert lists to arrays for frozen storage.
-            var frozenCache = cache.ToFrozenDictionary(
-                static kvp => kvp.Key,
-                static kvp => kvp.Value.ToArray()
-            );
-            Volatile.Write(ref _frozenCache, frozenCache);
-            Volatile.Write(ref _registrationCache, null);
+                Volatile.Write(ref _frozenCache, frozenCache);
+                Volatile.Write(ref _registrationCache, null);
+            }
         }
     }
 }
