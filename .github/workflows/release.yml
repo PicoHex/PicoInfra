@@ -227,6 +227,9 @@ jobs:
     environment: release
     permissions:
       contents: write
+      # GitHub OIDC: lets this job mint the identity token nuget.org trades for a
+      # short-lived API key. Without it the login step has nothing to present.
+      id-token: write
 
     steps:
       - name: Download package artifacts
@@ -238,6 +241,12 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: NuGet login (OIDC → temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
       - name: Publish packages to NuGet
         shell: bash
         run: |
@@ -245,7 +254,7 @@ jobs:
           for file in *.nupkg; do
             if [[ "$file" != *.snupkg ]] && [[ "$file" != *.symbols.nupkg ]]; then
               dotnet nuget push "$file" \
-                --api-key "${{ secrets.NUGET_API_KEY }}" \
+                --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
                 --source https://api.nuget.org/v3/index.json \
                 --skip-duplicate
             fi
