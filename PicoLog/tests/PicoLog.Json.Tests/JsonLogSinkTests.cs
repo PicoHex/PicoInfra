@@ -25,6 +25,18 @@ public class JsonLogSinkTests
             await Assert.That(lines[0]).Contains("Hello, world!");
             await Assert.That(lines[0]).Contains("Test");
             await Assert.That(lines[0]).Contains("Info");
+
+            // Contains() is not the contract: this file is NDJSON, so every line has to PARSE.
+            // The old writer misuse produced `{"Message":"x""Level":"Info"}` — substrings all
+            // present, commas gone — and this test stayed green on it for months.
+            var doc = PicoDocument.Parse(System.Text.Encoding.UTF8.GetBytes(lines[0]));
+            var root = doc.RootElement;
+            await Assert.That(root.TryGetProperty("Message", out var message)).IsTrue();
+            await Assert.That(message.GetString()).IsEqualTo("Hello, world!");
+            await Assert.That(root.TryGetProperty("Level", out var level)).IsTrue();
+            await Assert.That(level.GetString()).IsEqualTo("Info");
+            await Assert.That(root.TryGetProperty("Category", out var category)).IsTrue();
+            await Assert.That(category.GetString()).IsEqualTo("Test");
         }
         finally
         {

@@ -99,23 +99,23 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
         var jw = new JsonWriter(writer);
         jw.WriteStartObject();
 
-        WriteProperty(jw, "Timestamp", entry.Timestamp.ToString("O"));
-        WriteProperty(jw, "Level", entry.Level.ToString());
+        WriteProperty(ref jw, "Timestamp", entry.Timestamp.ToString("O"));
+        WriteProperty(ref jw, "Level", entry.Level.ToString());
         if (entry.Category is not null)
-            WriteProperty(jw, "Category", entry.Category);
+            WriteProperty(ref jw, "Category", entry.Category);
         if (entry.Message is not null)
-            WriteProperty(jw, "Message", entry.Message);
+            WriteProperty(ref jw, "Message", entry.Message);
         if (entry.MessageTemplate is not null)
-            WriteProperty(jw, "MessageTemplate", entry.MessageTemplate);
+            WriteProperty(ref jw, "MessageTemplate", entry.MessageTemplate);
         if (entry.EventId != default && entry.EventId.Name is not null)
-            WriteProperty(jw, "EventId", entry.EventId.Name);
+            WriteProperty(ref jw, "EventId", entry.EventId.Name);
 
         if (entry.Exception is not null)
         {
-            WriteProperty(jw, "ExceptionType", entry.Exception.GetType().FullName!);
-            WriteProperty(jw, "Exception", entry.Exception.Message);
+            WriteProperty(ref jw, "ExceptionType", entry.Exception.GetType().FullName!);
+            WriteProperty(ref jw, "Exception", entry.Exception.Message);
             if (entry.Exception.StackTrace is not null)
-                WriteProperty(jw, "StackTrace", entry.Exception.StackTrace);
+                WriteProperty(ref jw, "StackTrace", entry.Exception.StackTrace);
         }
 
         if (entry.Properties is { Count: > 0 })
@@ -123,7 +123,7 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
             jw.WritePropertyName("Properties");
             jw.WriteStartObject();
             foreach (var prop in entry.Properties)
-                WriteProperty(jw, prop.Key, prop.Value?.ToString());
+                WriteProperty(ref jw, prop.Key, prop.Value?.ToString());
             jw.WriteEndObject();
         }
 
@@ -132,14 +132,21 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
             jw.WritePropertyName("ScopeProperties");
             jw.WriteStartObject();
             foreach (var prop in entry.ScopeProperties)
-                WriteProperty(jw, prop.Key, prop.Value?.ToString());
+                WriteProperty(ref jw, prop.Key, prop.Value?.ToString());
             jw.WriteEndObject();
         }
 
         jw.WriteEndObject();
     }
 
-    private static void WriteProperty(JsonWriter writer, string name, string? value)
+    // BY REF, because JsonWriter is a ref struct: a by-value parameter is a COPY, and every
+    // byte (plus the "property name is pending" flag) it writes dies with the callee. Until
+    // the PicoSerDe 2026.12.0 bump this was invisible rather than harmless — 2026.10.0 got the
+    // bytes into the shared IBufferWriter and produced `{"Message":"x""Level":"Info"}` (invalid
+    // JSON, commas lost with the copy's comma state), and the new span cache in 2026.11+ keeps
+    // them in the copy entirely, so the line became `{}`. The test that should have caught it
+    // asserted Contains() instead of parsing the line; JsonLogSinkTests now parses it.
+    private static void WriteProperty(ref JsonWriter writer, string name, string? value)
     {
         writer.WritePropertyName(name);
         if (value is null)
