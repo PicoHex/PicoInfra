@@ -80,13 +80,19 @@ internal static class YamlFlattener
                     break;
                 }
 
+                // Mappings open with ObjectStart and sequences with ArrayStart (PicoSerDe
+                // 2026.12.1: "a sequence's container token is an array, not an object"). Both
+                // carry the owning key on the preceding PropertyName, and both close with their
+                // own kind, so one frame per container serves either.
                 case TokenType.ObjectStart:
+                case TokenType.ArrayStart:
                     frames.Add(new Frame(pendingItemIndex ?? pendingKey ?? ""));
                     pendingKey = null;
                     pendingItemIndex = null;
                     break;
 
                 case TokenType.ObjectEnd:
+                case TokenType.ArrayEnd:
                     // The reader emits one trailing ObjectEnd past the last close (measured), so
                     // the pop has to be guarded rather than trusted.
                     if (frames.Count > 1)
