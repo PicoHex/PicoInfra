@@ -4,19 +4,30 @@ public static class CfgBuilderTomlExtensions
 {
     extension(CfgBuilder builder)
     {
-        public CfgBuilder AddToml(string toml)
+        /// <param name="toml">The TOML document to parse.</param>
+        /// <param name="flattenArrays">
+        /// When <see langword="true"/>, array elements are flattened with numeric index segments —
+        /// <c>servers:0:name</c> for an array of tables, <c>ports:0</c> for a value array — matching
+        /// the list binding format used by CfgBind. Defaults to <see langword="false"/> (arrays are
+        /// skipped), the same contract <c>AddJson</c> has.
+        /// </param>
+        public CfgBuilder AddToml(string toml, bool flattenArrays = false)
         {
             ArgumentNullException.ThrowIfNull(toml);
-            return builder.AddCustomSource(new TomlCfgSource(Encoding.UTF8.GetBytes(toml)));
+            return builder.AddCustomSource(
+                new TomlCfgSource(Encoding.UTF8.GetBytes(toml), flattenArrays)
+            );
         }
 
-        public CfgBuilder AddTomlFile(string path)
+        /// <param name="path">The path to the TOML file.</param>
+        /// <param name="flattenArrays">See <see cref="AddToml"/>.</param>
+        public CfgBuilder AddTomlFile(string path, bool flattenArrays = false)
         {
             ArgumentNullException.ThrowIfNull(path);
             return builder.AddSource(
                 builder.CreateFileWatchingSource(
                     path,
-                    ParseTomlFileAsync,
+                    (stream, ct) => ParseTomlFileAsync(stream, ct, flattenArrays),
                     () => File.GetLastWriteTimeUtc(path)
                 )
             );
@@ -25,26 +36,28 @@ public static class CfgBuilderTomlExtensions
 
     private static Task<Dictionary<string, string>> ParseTomlFileAsync(
         Stream stream,
-        CancellationToken ct
+        CancellationToken ct,
+        bool flattenArrays = false
     )
     {
         ct.ThrowIfCancellationRequested();
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(TomlFlattener.Flatten(buffer.ToArray()));
+        return Task.FromResult(TomlFlattener.Flatten(buffer.ToArray(), flattenArrays));
     }
 }
 
-internal sealed class TomlCfgSource(byte[] tomlBytes) : ICfgSource
+internal sealed class TomlCfgSource(byte[] tomlBytes, bool flattenArrays = false) : ICfgSource
 {
     public ValueTask<ICfgProvider> OpenAsync(CancellationToken ct = default) =>
-        ValueTask.FromResult<ICfgProvider>(new TomlCfgProvider(tomlBytes));
+        ValueTask.FromResult<ICfgProvider>(new TomlCfgProvider(tomlBytes, flattenArrays));
 }
 
-internal sealed class TomlCfgProvider(byte[] tomlBytes) : ICfgProvider
+internal sealed class TomlCfgProvider(byte[] tomlBytes, bool flattenArrays = false) : ICfgProvider
 {
-    public ICfgSnapshot Snapshot { get; } = new TomlCfgSnapshot(TomlFlattener.Flatten(tomlBytes));
+    public ICfgSnapshot Snapshot { get; } =
+        new TomlCfgSnapshot(TomlFlattener.Flatten(tomlBytes, flattenArrays));
 
     public ValueTask<bool> ReloadAsync(CancellationToken ct = default) =>
         ValueTask.FromResult(false);
