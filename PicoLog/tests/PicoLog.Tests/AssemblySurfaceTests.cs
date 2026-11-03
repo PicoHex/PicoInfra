@@ -64,7 +64,13 @@ public sealed class AssemblySurfaceTests
         // serializer reference. Pinned here because "core has no sink implementations" is the
         // design rule the move implements, and a file added back to this project would restore
         // the hand-rolled escaper rather than fail a build.
-        await Assert.That(picoLogAssembly.GetType("PicoLog.SeqSink")).IsNull();
+        //
+        // Type.GetType with an assembly-qualified name is the string-literal-safe form (the trim
+        // analyzer points Assembly.GetType callers at it), and it returns null both for "type not
+        // in that assembly" and for "assembly not resolvable" — so the positive control below
+        // proves the lookup really reached PicoLog.
+        await Assert.That(Type.GetType("PicoLog.SeqSink, PicoLog")).IsNull();
+        await Assert.That(Type.GetType("PicoLog.FileSink, PicoLog")).IsNotNull();
     }
 
     [Test]
@@ -83,7 +89,7 @@ public sealed class AssemblySurfaceTests
             .ToArray();
 #pragma warning restore IL2026
 
-        await Assert.That(references).IsEquivalentTo((string[])["PicoLog.Abs"]);
+        await Assert.That(string.Join(",", references)).IsEqualTo("PicoLog.Abs");
     }
 
     private static bool HasPublicParameterlessDispose(Type type) =>
