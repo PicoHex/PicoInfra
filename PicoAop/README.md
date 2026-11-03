@@ -158,7 +158,9 @@ container.Register<IHealthCheck, HealthCheck>()
 
 - **ref / out / in parameters** — delegated directly without interception (C# structs cannot store ref fields); reported as `PICO110`
 - **Indexers, events, ref-returning methods, ref struct / pointer parameters** — delegated directly; reported as `PICO111`
+- **Non-virtual members of a class service** — the proxy derives from the class, and `Wrap_*` returns the class, so a member that is not `virtual` / `abstract` / `override` cannot be intercepted; it is delegated directly; reported as `PICO111`
 - **Overloads that differ only by generic type arguments** (`M(List<int>)` / `M(List<string>)`) — the generated invocation name is built from the parameter's short type name, so those members are delegated; reported as `PICO113`
+- **One member name inherited from two base interfaces with incompatible signatures** (`IA { int V { get; } }` + `IB { string V { get; } }`) — both members are implemented (the second one explicitly as `IB.V`), but only one generated name exists, so neither is intercepted; reported as `PICO113`
 - **Properties with an `init` accessor** — cannot be implemented by a proxy, so interception for that service is skipped; reported as `PICO112`
 
 Properties (getter and setter), generic methods (type parameters and their constraints) and members inherited from base interfaces are intercepted.
@@ -171,9 +173,9 @@ Properties (getter and setter), generic methods (type parameters and their const
 | PICO102 | Error | Registered type is a value type |
 | PICO105 | Error | Interceptor type does not implement IInterceptor |
 | PICO110 | Warning | Method with ref/out/in parameters is delegated without interception |
-| PICO111 | Warning | Indexer, event, ref-returning method or ref struct/pointer member is delegated without interception |
+| PICO111 | Warning | Member delegated without interception: indexer, event, ref-returning method, ref struct/pointer member, or a non-virtual member of a class service |
 | PICO112 | Error | Property with an `init` accessor cannot be proxied — interception for the service is skipped |
-| PICO113 | Warning | Two members share one generated invocation name (overloads differing only by generic type arguments) — those members are delegated |
+| PICO113 | Warning | Two members share one generated invocation name (overloads differing only by generic type arguments, or one name inherited from two base interfaces) — those members are delegated |
 
 Registration-analysis diagnostics (PICO002–PICO006) come from PicoDI.Gen.
 

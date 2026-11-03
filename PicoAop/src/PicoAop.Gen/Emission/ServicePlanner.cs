@@ -30,6 +30,22 @@ internal sealed record PlannedMember(
 {
     public bool IsIntercepted => Emission == MemberEmission.Intercepted;
 
+    /// <summary>
+    /// Fully-qualified interface this member has to be read through
+    /// (<c>((IA)_inner).V</c>). Set when the service inherits one member name
+    /// from more than one interface: on such a service the plain
+    /// <c>_inner.V</c> is CS0229 (ambiguous), even when one member implements
+    /// both.
+    /// </summary>
+    public string? ReceiverCast { get; init; }
+
+    /// <summary>
+    /// Set when the member has to be declared as an explicit interface
+    /// implementation (<c>string IB.V</c>), because another member of the same
+    /// service occupies the plain name with an incompatible signature.
+    /// </summary>
+    public string? ExplicitInterface { get; init; }
+
     public string DisplayName =>
         Kind switch
         {
@@ -74,6 +90,8 @@ internal sealed class ServicePlan(
 /// </summary>
 internal static class ServicePlanner
 {
+    private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
+
     /// <summary>
     /// Why a class member cannot be intercepted: the proxy is a subclass, and a
     /// member that is not <c>virtual</c>/<c>abstract</c>/<c>override</c> cannot
@@ -166,7 +184,12 @@ internal static class ServicePlanner
         return new ServicePlan(
             service,
             safeName,
-            DegradeCollisions(service, safeName, planned, diagnostics)
+            DegradeCollisions(
+                service,
+                safeName,
+                ResolveNameCollisions(service, safeName, planned, diagnostics),
+                diagnostics
+            )
         );
     }
 
@@ -318,6 +341,157 @@ internal static class ServicePlanner
     /// change; until then the colliding members are delegated and reported, so
     /// the generated file still compiles.
     /// </summary>
+    /// <summary>
+    /// Two members of one service can occupy the same C# name with incompatible
+    /// signatures — <c>IA { int V { get; } }</c> and <c>IB { string V { get; } }</c>
+    /// on <c>IC : IA, IB</c> — and a class then has to implement them explicitly.
+    /// One signature keeps the plain name (it satisfies every interface that
+    /// declares that exact signature), the others are spelled
+    /// <c>Interface.Member</c>. Interception cannot tell them apart (they
+    /// generate one invocation name), so they are delegated and PICO113 names
+    /// them.
+    /// <para>
+    /// Independently of that, every member the service inherits through more than
+    /// one interface is read through the interface that declares it
+    /// (<c>((IA)_inner).V</c>): the plain <c>_inner.V</c> is CS0229 on <c>IC</c>,
+    /// even when a single member implements both interfaces.
+    /// </para>
+    /// </summary>
+    private static List<PlannedMember> ResolveNameCollisions(
+        INamedTypeSymbol service,
+        string safeName,
+        List<PlannedMember> planned,
+        List<Diagnostic> diagnostics
+    )
+    {
+        // A class declares its own members: one name, one slot, no base
+        // interface to implement explicitly.
+        if (service.TypeKind != TypeKind.Interface)
+            return planned;
+
+        var bySlot = planned
+            .GroupBy(member => SlotKey(SymbolOf(member)))
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
+
+        // Members that must be spelled `Interface.Member` because a different
+        // signature owns the plain name, and every member of such a slot (the
+        // chain cannot tell them apart, so none of them is routed).
+        var explicitMembers = new HashSet<PlannedMember>();
+        var delegatedMembers = new HashSet<PlannedMember>();
+        foreach (var slot in bySlot.Values.Where(group => group.Count > 1))
+        {
+            // Members with one signature need one implicit implementation only:
+            // it satisfies every interface that declares that signature.
+            var distinct = new List<PlannedMember>();
+            var signatures = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var candidate in slot)
+                if (signatures.Add(SignatureKey(SymbolOf(candidate))))
+                    distinct.Add(candidate);
+
+            if (distinct.Count < 2)
+                continue;
+
+            diagnostics.Add(
+                Diagnostic.Create(
+                    PicoAopDiag.MemberShapeCollision,
+                    Location.None,
+                    string.Join("', '", distinct.Select(m => m.DisplayName)),
+                    service.Name,
+                    InvocationNames(safeName, distinct[0]).First()
+                )
+            );
+
+            foreach (var candidate in distinct)
+                delegatedMembers.Add(candidate);
+            foreach (var candidate in distinct.Skip(1))
+                explicitMembers.Add(candidate);
+        }
+
+        var ambiguousSlots = AmbiguousSlots(service);
+
+        return
+        [
+            .. planned.Select(member =>
+            {
+                var declaring = DeclaringTypeName(member);
+                var isExplicit = explicitMembers.Contains(member);
+                var readThrough = isExplicit || ambiguousSlots.Contains(SlotKey(SymbolOf(member)));
+
+                var mapped = member with
+                {
+                    ReceiverCast = readThrough ? declaring : null,
+                    ExplicitInterface = isExplicit ? declaring : null,
+                };
+
+                return delegatedMembers.Contains(member) && mapped.IsIntercepted
+                    ? mapped.DelegateTo(
+                        "another member of a different base interface owns the same name and parameters"
+                    )
+                    : mapped;
+            }),
+        ];
+    }
+
+    /// <summary>
+    /// The signature slots the service inherits from more than one interface.
+    /// Reading such a member off the service itself is ambiguous (CS0229), so the
+    /// proxy has to go through the declaring interface — including the case where
+    /// one member implements both interfaces.
+    /// </summary>
+    private static HashSet<string> AmbiguousSlots(INamedTypeSymbol service)
+    {
+        var owners = new Dictionary<string, HashSet<INamedTypeSymbol>>(StringComparer.Ordinal);
+        foreach (var source in EnumerateMemberSources(service))
+        {
+            foreach (var member in source.GetMembers())
+            {
+                if (!IsPlannedShape(member))
+                    continue;
+
+                var key = SlotKey(member);
+                if (!owners.TryGetValue(key, out var declaring))
+                    owners[key] = declaring = new HashSet<INamedTypeSymbol>(
+                        SymbolEqualityComparer.Default
+                    );
+                declaring.Add(source);
+            }
+        }
+
+        return [.. owners.Where(pair => pair.Value.Count > 1).Select(pair => pair.Key)];
+    }
+
+    /// <summary>
+    /// The name the compiler resolves: member name plus, for methods and
+    /// indexers, the type parameters and the parameter types. Two members in one
+    /// slot cannot both be declared with the plain member name, whatever their
+    /// return types are.
+    /// </summary>
+    private static string SlotKey(ISymbol member) =>
+        member switch
+        {
+            IMethodSymbol method =>
+                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}",
+            IPropertySymbol { IsIndexer: true } indexer =>
+                $"P:this[]:{ParameterTypes(indexer.Parameters)}",
+            IPropertySymbol property => $"P:{property.Name}",
+            IEventSymbol @event => $"E:{@event.Name}",
+            _ => $"{member.Kind}:{member.Name}",
+        };
+
+    /// <summary>Whether a member of the service is one the proxy has to declare.</summary>
+    private static bool IsPlannedShape(ISymbol member) =>
+        member
+            is (
+                IMethodSymbol
+                {
+                    MethodKind: MethodKind.Ordinary,
+                    DeclaredAccessibility: Accessibility.Public,
+                    IsStatic: false
+                }
+                or IPropertySymbol { DeclaredAccessibility: Accessibility.Public, IsStatic: false }
+                or IEventSymbol { DeclaredAccessibility: Accessibility.Public, IsStatic: false }
+            );
+
     private static List<PlannedMember> DegradeCollisions(
         INamedTypeSymbol service,
         string safeName,
@@ -380,11 +554,18 @@ internal static class ServicePlanner
             yield break;
         }
 
-        var property = member.Property!;
-        if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
-            yield return $"Invocation_{safeName}_{property.Name}_Getter";
-        if (property.SetMethod?.DeclaredAccessibility == Accessibility.Public)
-            yield return $"Invocation_{safeName}_{property.Name}_Setter";
+        if (member.Property is { } property)
+        {
+            if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
+                yield return $"Invocation_{safeName}_{property.Name}_Getter";
+            if (property.SetMethod?.DeclaredAccessibility == Accessibility.Public)
+                yield return $"Invocation_{safeName}_{property.Name}_Setter";
+            yield break;
+        }
+
+        // An event is always delegated, but the collision pass still has to name
+        // it instead of dereferencing the property slot (NullReferenceException).
+        yield return $"Invocation_{safeName}_{member.Event!.Name}";
     }
 
     /// <summary>
@@ -397,11 +578,7 @@ internal static class ServicePlanner
             EnumerateMemberSources(service)
                 .SelectMany(source => source.GetMembers())
                 .OfType<IMethodSymbol>()
-                .Where(m =>
-                    m.MethodKind == MethodKind.Ordinary
-                    && m.DeclaredAccessibility == Accessibility.Public
-                    && !m.IsStatic
-                )
+                .Where(IsPlannedShape)
         );
 
     private static IEnumerable<IPropertySymbol> EnumerateProperties(INamedTypeSymbol service) =>
@@ -409,7 +586,7 @@ internal static class ServicePlanner
             EnumerateMemberSources(service)
                 .SelectMany(source => source.GetMembers())
                 .OfType<IPropertySymbol>()
-                .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+                .Where(IsPlannedShape)
         );
 
     private static IEnumerable<IEventSymbol> EnumerateEvents(INamedTypeSymbol service) =>
@@ -417,7 +594,7 @@ internal static class ServicePlanner
             EnumerateMemberSources(service)
                 .SelectMany(source => source.GetMembers())
                 .OfType<IEventSymbol>()
-                .Where(e => e.DeclaredAccessibility == Accessibility.Public && !e.IsStatic)
+                .Where(IsPlannedShape)
         );
 
     /// <summary>
@@ -448,16 +625,53 @@ internal static class ServicePlanner
             yield return baseInterface;
     }
 
+    /// <summary>
+    /// The full C# signature of a member — return type included, and the
+    /// accessors for a property. Without the return type, <c>IA { int V {get;} }</c>
+    /// and <c>IB { string V {get;} }</c> look like one member and the second is
+    /// silently dropped from the proxy (CS0738/CS0535 in generated code).
+    /// </summary>
     private static string SignatureKey(ISymbol member) =>
         member switch
         {
             IMethodSymbol method =>
-                $"M:{method.Name}:{method.TypeParameters.Length}:{string.Join(",", method.Parameters.Select(p => $"{p.RefKind}:{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"))}",
+                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}:{method.ReturnType.ToDisplayString(Fq)}",
             IPropertySymbol property =>
-                $"P:{property.Name}:{property.Parameters.Length}:{string.Join(",", property.Parameters.Select(p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))}",
-            IEventSymbol @event => $"E:{@event.Name}",
+                $"P:{property.Name}:{ParameterTypes(property.Parameters)}:{property.Type.ToDisplayString(Fq)}:{(property.GetMethod is null ? string.Empty : "g")}{(property.SetMethod is null ? string.Empty : "s")}",
+            IEventSymbol @event => $"E:{@event.Name}:{@event.Type.ToDisplayString(Fq)}",
             _ => $"{member.Kind}:{member.Name}",
         };
+
+    /// <summary>
+    /// What the compiler considers one name: the member name plus, for methods
+    /// and indexers, the type parameters and the parameter types. Two members in
+    /// one slot cannot both be declared with the plain member name, whatever
+    /// their return types are.
+    /// </summary>
+    private static string SlotKey(PlannedMember member)
+    {
+        if (member.Method is { } method)
+            return $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}";
+        if (member.Property is { IsIndexer: true } indexer)
+            return $"P:this[]:{ParameterTypes(indexer.Parameters)}";
+        if (member.Property is { } property)
+            return $"P:{property.Name}";
+        return $"E:{member.Event!.Name}";
+    }
+
+    private static string ParameterTypes(ImmutableArray<IParameterSymbol> parameters) =>
+        string.Join(
+            ",",
+            parameters.Select(p =>
+                $"{p.RefKind}:{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"
+            )
+        );
+
+    private static ISymbol SymbolOf(PlannedMember member) =>
+        member.Method ?? (ISymbol?)member.Property ?? member.Event!;
+
+    private static string DeclaringTypeName(PlannedMember member) =>
+        SymbolOf(member).ContainingType.ToDisplayString(Fq);
 
     private static bool IsUnsafeType(ITypeSymbol type) =>
         type.TypeKind is TypeKind.Pointer or TypeKind.FunctionPointer;

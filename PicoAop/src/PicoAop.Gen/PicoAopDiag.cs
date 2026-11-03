@@ -72,15 +72,18 @@ internal static class PicoAopDiag
     );
 
     /// <summary>
-    /// Two members map to one generated invocation name — the signature is
-    /// rendered from <c>p.Type.Name</c>, which drops generic type arguments, so
-    /// <c>M(List&lt;int&gt;)</c> and <c>M(List&lt;string&gt;)</c> collide. Those
-    /// members are delegated instead of emitting CS0101/CS0102/CS0111.
+    /// Two members map to one generated invocation name, so at most one of them
+    /// can be routed. Two causes: the invocation name is rendered from
+    /// <c>p.Type.Name</c>, which drops generic type arguments
+    /// (<c>M(List&lt;int&gt;)</c> / <c>M(List&lt;string&gt;)</c>), or two base
+    /// interfaces expose one member name with different signatures
+    /// (<c>IA:int V</c> / <c>IB:string V</c>). Either way those members are
+    /// delegated instead of emitting CS0101/CS0102/CS0111/CS0229.
     /// </summary>
     public static readonly DiagnosticDescriptor MemberShapeCollision = new(
         "PICO113",
         "Members share one generated invocation name",
-        "Members '{0}' of '{1}' map to the same generated invocation name '{2}' and are delegated without interception; overloads that differ only by generic type arguments are not supported",
+        "Members '{0}' of '{1}' map to the same generated invocation name '{2}' and are delegated without interception; a proxy can route only one member per generated name",
         Category,
         DiagnosticSeverity.Warning,
         isEnabledByDefault: true

@@ -190,16 +190,16 @@ internal static class ProxyEmitter
         var retType = method.ReturnType.ToDisplayString(Fq);
         var paramDecl = string.Join(", ", method.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", method.Parameters.Select(ParameterArgument));
-        var modifier = Modifier(method, isClassType);
+        var modifier = Modifier(member, isClassType);
 
         sb.AppendLine(
-            $"    {modifier} {refPrefix}{retType} {method.Name}{typeParameters}({paramDecl}){constraints}"
+            $"    {modifier}{refPrefix}{retType} {MemberName(member, method.Name)}{typeParameters}({paramDecl}){constraints}"
         );
         sb.AppendLine("    {");
 
         if (!member.IsIntercepted)
         {
-            var call = $"_inner.{method.Name}{typeParameters}({paramArgs})";
+            var call = $"{Inner(member)}.{method.Name}{typeParameters}({paramArgs})";
             if (refPrefix.Length > 0)
                 sb.AppendLine($"        return ref {call};");
             else if (method.ReturnType.SpecialType == SpecialType.System_Void)
@@ -260,11 +260,11 @@ internal static class ProxyEmitter
     {
         var property = member.Property!;
         var propType = property.Type.ToDisplayString(Fq);
-        var modifier = Modifier(property, isClassType);
+        var modifier = Modifier(member, isClassType);
         var lastStep = interceptorTypes.Count - 1;
         var interceptorArgs = string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"));
 
-        sb.AppendLine($"    {modifier} {propType} {property.Name}");
+        sb.AppendLine($"    {modifier}{propType} {MemberName(member, property.Name)}");
         sb.AppendLine("    {");
 
         if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
@@ -282,7 +282,7 @@ internal static class ProxyEmitter
             }
             else
             {
-                sb.AppendLine($"            return _inner.{property.Name};");
+                sb.AppendLine($"            return {Inner(member)}.{property.Name};");
             }
             sb.AppendLine("        }");
         }
@@ -302,7 +302,7 @@ internal static class ProxyEmitter
             }
             else
             {
-                sb.AppendLine($"            _inner.{property.Name} = value;");
+                sb.AppendLine($"            {Inner(member)}.{property.Name} = value;");
             }
             sb.AppendLine("        }");
         }
@@ -315,16 +315,17 @@ internal static class ProxyEmitter
     {
         var indexer = member.Property!;
         var propType = indexer.Type.ToDisplayString(Fq);
-        var modifier = Modifier(indexer, isClassType);
+        var modifier = Modifier(member, isClassType);
         var paramDecl = string.Join(", ", indexer.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", indexer.Parameters.Select(ParameterArgument));
+        var target = Inner(member);
 
-        sb.AppendLine($"    {modifier} {propType} this[{paramDecl}]");
+        sb.AppendLine($"    {modifier}{propType} {MemberName(member, "this")}[{paramDecl}]");
         sb.AppendLine("    {");
         if (indexer.GetMethod?.DeclaredAccessibility == Accessibility.Public)
-            sb.AppendLine($"        get => _inner[{paramArgs}];");
+            sb.AppendLine($"        get => {target}[{paramArgs}];");
         if (IsWritable(indexer))
-            sb.AppendLine($"        set => _inner[{paramArgs}] = value;");
+            sb.AppendLine($"        set => {target}[{paramArgs}] = value;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -333,27 +334,55 @@ internal static class ProxyEmitter
     {
         var @event = member.Event!;
         var eventType = @event.Type.ToDisplayString(Fq);
-        var modifier = Modifier(@event, isClassType);
+        var modifier = Modifier(member, isClassType);
+        var target = Inner(member);
 
-        sb.AppendLine($"    {modifier} event {eventType} {@event.Name}");
+        sb.AppendLine($"    {modifier}event {eventType} {MemberName(member, @event.Name)}");
         sb.AppendLine("    {");
-        sb.AppendLine($"        add => _inner.{@event.Name} += value;");
-        sb.AppendLine($"        remove => _inner.{@event.Name} -= value;");
+        sb.AppendLine($"        add => {target}.{@event.Name} += value;");
+        sb.AppendLine($"        remove => {target}.{@event.Name} -= value;");
         sb.AppendLine("    }");
         sb.AppendLine();
     }
 
     /// <summary>
-    /// How a generated member is declared. On a class service an overridable
-    /// member is <c>override</c>n (that is what routes the call); a member the
-    /// proxy cannot override is emitted with <c>new</c>, so the hiding is
-    /// deliberate — feeding the pass-through body without the CS0108 warning
-    /// that lands in a file the consumer cannot edit.
+    /// How a generated member is declared, including its trailing space. On a
+    /// class service an overridable member is <c>override</c>n (that is what
+    /// routes the call); a member the proxy cannot override is emitted with
+    /// <c>new</c>, so the hiding is deliberate — the pass-through body still
+    /// reaches the inner instance, without the CS0108 warning that lands in a
+    /// file the consumer cannot edit. An explicit interface implementation
+    /// takes no access modifier at all.
     /// </summary>
-    private static string Modifier(ISymbol member, bool isClassType) =>
-        !isClassType ? "public"
-        : ServicePlanner.IsOverridable(member) ? "public override"
-        : "public new";
+    private static string Modifier(PlannedMember member, bool isClassType)
+    {
+        if (member.ExplicitInterface is not null)
+            return string.Empty;
+
+        return !isClassType ? "public "
+            : ServicePlanner.IsOverridable(SymbolOf(member)) ? "public override "
+            : "public new ";
+    }
+
+    /// <summary>
+    /// The member name as it is declared. A member that collides with another
+    /// one from a different base interface is qualified, so the compiler reads it
+    /// as an explicit interface implementation.
+    /// </summary>
+    private static string MemberName(PlannedMember member, string name) =>
+        member.ExplicitInterface is null ? name : $"{member.ExplicitInterface}.{name}";
+
+    /// <summary>
+    /// The expression a pass-through body reads the inner instance through. On a
+    /// service that inherits one member name from several interfaces the plain
+    /// <c>_inner.X</c> is ambiguous (CS0229), so the plan records the interface
+    /// each member has to be seen through.
+    /// </summary>
+    private static string Inner(PlannedMember member) =>
+        member.ReceiverCast is null ? "_inner" : $"(({member.ReceiverCast})_inner)";
+
+    private static ISymbol SymbolOf(PlannedMember member) =>
+        member.Method ?? (ISymbol?)member.Property ?? member.Event!;
 
     private static bool IsWritable(IPropertySymbol property) =>
         property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };

@@ -169,10 +169,10 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
 
             foreach (var member in plan.Members.Where(m => m.IsIntercepted))
             {
-                if (member.Method is { } method)
-                    sb.AppendLine(EmitInvocationStruct(plan.SafeName, method, interceptorTypes));
-                else if (member.Property is { } property)
-                    EmitPropertyStructs(sb, plan.SafeName, property, namedSvc, interceptorTypes);
+                if (member.Method is not null)
+                    sb.AppendLine(EmitInvocationStruct(plan.SafeName, member, interceptorTypes));
+                else if (member.Property is not null)
+                    EmitPropertyStructs(sb, plan.SafeName, member, namedSvc, interceptorTypes);
             }
 
             sb.AppendLine(ProxyEmitter.EmitInterceptedClass(plan, interceptorTypes));
@@ -200,10 +200,11 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
     /// </summary>
     private static string EmitInvocationStruct(
         string safeSvcName,
-        IMethodSymbol method,
+        PlannedMember member,
         List<ITypeSymbol> interceptorTypes
     )
     {
+        var method = member.Method!;
         var sb = new StringBuilder();
         var svcFullName = method.ContainingType.ToDisplayString(Fq);
         var retType = method.ReturnType;
@@ -288,7 +289,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         // An explicit type-argument list keeps the target call unambiguous even
         // when the arguments cannot infer the method's type parameters.
         var paramArgs = string.Join(", ", method.Parameters.Select(p => $"_{p.Name}"));
-        var targetCall = $"_target.{method.Name}{typeParameters}({paramArgs})";
+        var targetCall = $"{TargetOf(member)}.{method.Name}{typeParameters}({paramArgs})";
         if (isAsync)
         {
             var asyncRet = hasReturn ? $"ValueTask<{resultTypeName}>" : "ValueTask";
@@ -334,11 +335,13 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
     private static void EmitPropertyStructs(
         StringBuilder sb,
         string safeSvcName,
-        IPropertySymbol prop,
+        PlannedMember member,
         INamedTypeSymbol serviceType,
         List<ITypeSymbol> interceptorTypes
     )
     {
+        var prop = member.Property!;
+        var target = TargetOf(member);
         var svcFullName = serviceType.ToDisplayString(Fq);
         var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var intSuffix = string.Join(
@@ -377,7 +380,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             sb.AppendLine($"    public string MethodName => \"get_{prop.Name}\";");
             sb.AppendLine($"    public Type ServiceType => typeof({svcFullName});");
             sb.AppendLine($"    public {propType} Result {{ get; set; }}");
-            sb.AppendLine($"    internal {propType} InvokeTarget() => _target.{prop.Name};");
+            sb.AppendLine($"    internal {propType} InvokeTarget() => {target}.{prop.Name};");
             sb.AppendLine("}");
             sb.AppendLine();
         }
@@ -403,11 +406,20 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             sb.AppendLine("    }");
             sb.AppendLine($"    public string MethodName => \"set_{prop.Name}\";");
             sb.AppendLine($"    public Type ServiceType => typeof({svcFullName});");
-            sb.AppendLine($"    internal void InvokeTarget() => _target.{prop.Name} = _value;");
+            sb.AppendLine($"    internal void InvokeTarget() => {target}.{prop.Name} = _value;");
             sb.AppendLine("}");
             sb.AppendLine();
         }
     }
+
+    /// <summary>
+    /// The instance an invocation struct calls. A service that inherits one
+    /// member name from several interfaces has to be read through the interface
+    /// that declares the member (<c>((IA)_target).V</c>): the plain
+    /// <c>_target.V</c> is CS0229.
+    /// </summary>
+    private static string TargetOf(PlannedMember member) =>
+        member.ReceiverCast is null ? "_target" : $"(({member.ReceiverCast})_target)";
 
     /// <summary>
     /// The wrapper a skipped service still has to publish: it returns the inner
