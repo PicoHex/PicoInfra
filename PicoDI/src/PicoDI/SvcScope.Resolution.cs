@@ -15,9 +15,15 @@ public sealed partial class SvcScope
         ArgumentNullException.ThrowIfNull(serviceType);
         DisposalGuards.ThrowIfDisposed(ref _disposed, nameof(SvcScope));
 
-        // Fast path: direct Volatile.Read for single-singleton (~2ns)
-        if (ReferenceEquals(Volatile.Read(ref _lastSingletonType), serviceType))
-            return Volatile.Read(ref _lastSingletonInstance)!;
+        // Fast path: ONE reference read of the immutable (type, instance) pair plus a Type
+        // compare (~2ns, no allocation on a hit). The type and the instance travel together as
+        // a single published reference, so this can never return a pair assembled from two
+        // different publications — reading the two fields separately could hand back the other
+        // singleton's instance (review-2026-11-02 finding 1, measured 2 302 wrong objects in
+        // 12.8 M resolves).
+        var lastSingleton = Volatile.Read(ref _lastSingleton);
+        if (lastSingleton is not null && ReferenceEquals(lastSingleton.Type, serviceType))
+            return lastSingleton.Instance;
 
         // Medium path: Dictionary+lock for multi-singleton (~20ns)
         if (_singletonInstances is not null)
@@ -96,8 +102,11 @@ public sealed partial class SvcScope
 
     private void CacheSingleton(Type serviceType, object instance)
     {
-        Volatile.Write(ref _lastSingletonType, serviceType);
-        Volatile.Write(ref _lastSingletonInstance, instance);
+        // Publish (type, instance) as ONE reference. Two volatile writes would let a reader
+        // observe the new type beside the previous publication's instance; one reference makes
+        // that pairing structurally impossible rather than narrow (review-2026-11-02 finding 1).
+        Volatile.Write(ref _lastSingleton, new SingletonCacheEntry(serviceType, instance));
+
         var cache = LazyInitializer.EnsureInitialized(ref _singletonInstances);
         lock (_singletonCacheLock)
             cache.TryAdd(serviceType, instance);

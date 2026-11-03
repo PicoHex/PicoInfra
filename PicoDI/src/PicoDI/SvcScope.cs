@@ -15,12 +15,29 @@ public sealed partial class SvcScope : ISvcScope
     private readonly FrozenDictionary<Type, SvcRuntimeRegistration[]> _registrationCache;
 
     // Fast singleton instance cache — bypasses registration lookup on warm path.
-    // Uses Dictionary+lock for multi-singleton, but single-singleton case uses
-    // direct Volatile.Read pair (2ns) — no lock, no dictionary lookup.
+    // Uses Dictionary+lock for multi-singleton (~20ns), but the last-published singleton
+    // is one Volatile.Read of the immutable (type, instance) holder plus a Type reference
+    // compare (~2ns): no lock, no dictionary lookup, no allocation on a hit. The pair is a
+    // single reference on purpose — two fields published by two Volatile.Writes let a reader
+    // pair the NEW type with the PREVIOUS type's instance and hand out the wrong singleton
+    // (review-2026-11-02 finding 1: 2 302 wrong objects in 12.8 M resolves). Publishing a
+    // pair allocates one holder per (scope, singleton type), i.e. once per scope for a given
+    // service, never per resolve.
     private Dictionary<Type, object>? _singletonInstances;
     private readonly Lock _singletonCacheLock = new();
-    private Type? _lastSingletonType; // Volatile: direct fast path for single-singleton
-    private object? _lastSingletonInstance;
+    private SingletonCacheEntry? _lastSingleton; // Volatile: immutable (type, instance) pair
+
+    /// <summary>
+    /// Immutable (service type, singleton instance) pair for the warm fast path. Assigned to
+    /// <see cref="_lastSingleton"/> with a single volatile write, so a reader that observes the
+    /// reference observes a fully built pair: a type next to an instance it does not belong to
+    /// (a torn pair) is not representable.
+    /// </summary>
+    private sealed class SingletonCacheEntry(Type type, object instance)
+    {
+        internal readonly Type Type = type;
+        internal readonly object Instance = instance;
+    }
 
     // Scoped instances: ConcurrentDictionary with Lazy<T>(ExecutionAndPublication).
     // The Lazy wrapper ensures the factory is called at most once per *successful*
