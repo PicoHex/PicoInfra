@@ -147,6 +147,48 @@ public class ClassMemberEligibilityTests : GeneratorTestBase
         await Assert.That(calls.Contains("sync:get_VirtualValue")).IsTrue();
     }
 
+    /// <summary>
+    /// A <c>sealed override</c> is an override but not one a further derived
+    /// type can override, so the proxy cannot route it either: it used to be
+    /// planned as intercepted and emitted as <c>public override</c> (CS0239 in
+    /// the generated file, zero diagnostics).
+    /// review-2026-11-02/rev-aop-3c.md, D1.
+    /// </summary>
+    [Test]
+    public async Task SealedOverrideClassMember_ReportsPico111_AndIsNeverEmittedAsOverride()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public class Svc
+                {
+                    public sealed override string ToString() => "svc";
+                    public virtual string Reachable() => "r";
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine("----- warnings -----");
+        Console.WriteLine(result.WarningText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // The sealed member is reported instead of being planned as
+        // intercepted ...
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+        await Assert.That(result.DiagnosticText.Contains("'ToString'")).IsTrue();
+        await Assert.That(result.GeneratedOutput.Contains("Invocation_Svc_ToString")).IsFalse();
+        await Assert.That(result.GeneratedOutput.Contains("override string ToString")).IsFalse();
+
+        // ... and the overridable member next to it is still routed.
+        await Assert.That(result.GeneratedOutput.Contains("Invocation_Svc_Reachable")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
     private static object CreateProxy(Assembly assembly)
     {
         var proxyType =

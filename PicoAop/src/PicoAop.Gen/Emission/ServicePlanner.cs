@@ -94,24 +94,29 @@ internal static class ServicePlanner
 
     /// <summary>
     /// Why a class member cannot be intercepted: the proxy is a subclass, and a
-    /// member that is not <c>virtual</c>/<c>abstract</c>/<c>override</c> cannot
-    /// be overridden, so a decorated call can never reach the chain.
+    /// member that is not <c>virtual</c>/<c>abstract</c>/<c>override</c> — or
+    /// that is a <c>sealed override</c> — cannot be overridden again, so a
+    /// decorated call can never reach the chain.
     /// </summary>
     internal const string NotOverridableReason =
-        "a non-virtual member of a class, which a derived proxy cannot override";
+        "a member of a class that a derived proxy cannot override (not virtual, or sealed)";
 
     /// <summary>
     /// Whether a derived proxy can route this member. Only class services care:
-    /// an interface member is always implemented by the proxy.
+    /// an interface member is always implemented by the proxy. A
+    /// <c>sealed override</c> is deliberately excluded: it is an override, but
+    /// not one a further derived type may override, so emitting
+    /// <c>public override</c> for it is CS0239 in the generated file.
     /// </summary>
     internal static bool IsOverridable(ISymbol member) =>
         member switch
         {
-            IMethodSymbol method => method.IsVirtual || method.IsOverride || method.IsAbstract,
-            IPropertySymbol property => property.IsVirtual
-                || property.IsOverride
-                || property.IsAbstract,
-            IEventSymbol @event => @event.IsVirtual || @event.IsOverride || @event.IsAbstract,
+            IMethodSymbol method => !method.IsSealed
+                && (method.IsVirtual || method.IsOverride || method.IsAbstract),
+            IPropertySymbol property => !property.IsSealed
+                && (property.IsVirtual || property.IsOverride || property.IsAbstract),
+            IEventSymbol @event => !@event.IsSealed
+                && (@event.IsVirtual || @event.IsOverride || @event.IsAbstract),
             _ => false,
         };
 
