@@ -8,13 +8,32 @@ public sealed partial class SvcContainer
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
 
-        // Gracefully stop hosted services before disposal
+        // Order of the groups is a dependency order: a disposer may use what it depends on, so
+        // a dependency is released after its dependents. Each group keeps its own inner order
+        // (hosted services LIFO by registration, singletons LIFO by construction, scopes
+        // children-before-parents).
+        //
+        // 1. Hosted services stop first: their StopAsync may still use any service, including
+        //    singletons, and nothing else may run before they are down.
         await StopHostedServicesAsync().ConfigureAwait(false);
 
-        await DisposeSingletonInstancesAsync().ConfigureAwait(false);
-        await DisposeImplicitRootScopeAsync().ConfigureAwait(false);
-        await DisposeHostingScopeAsync().ConfigureAwait(false);
+        // 2. User root scopes: a scoped Dispose may use the singletons it depends on, so every
+        //    scope is disposed before the singleton pass. Until review-2026-11-02 finding 3
+        //    this ran AFTER the singletons, so a scoped Dispose touched disposed singletons.
         await DisposeRootScopesAsync().ConfigureAwait(false);
+
+        // 3. The container-internal hosting scope (the scope hosted services are resolved from).
+        //    It is also tracked as a root scope, so the pass above normally already disposed it;
+        //    this call keeps the order explicit and handles the untracked case.
+        await DisposeHostingScopeAsync().ConfigureAwait(false);
+
+        // 4. Container-owned singletons, LIFO by construction order, while the scoped/transient
+        //    instances their factories captured are still alive.
+        await DisposeSingletonInstancesAsync().ConfigureAwait(false);
+
+        // 5. The implicit root scope owns exactly those captured instances, so it is released
+        //    last — after the singletons that captured them.
+        await DisposeImplicitRootScopeAsync().ConfigureAwait(false);
     }
 
     private async ValueTask DisposeImplicitRootScopeAsync()

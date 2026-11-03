@@ -129,6 +129,15 @@ Multiple registrations for the same service type are supported. Resolution retur
 
 **Singleton factories run against the container root scope.** A singleton factory's `scope` parameter is the container-internal root scope (not the resolving scope), so dependencies resolved inside a singleton factory live until container disposal — they never die with a short-lived request scope. Scoped/transient disposables created this way are disposed by the container.
 
+**Container disposal order: hosted services → user scopes → singletons → the container root scope (behaviour change).** `SvcContainer.DisposeAsync()` disposes in dependency order — a disposer may use what it depends on, so a dependency is released after its dependents:
+
+1. hosted services stop first, LIFO by registration — their `StopAsync` may still use any service, including singletons;
+2. user root scopes (children before parents, LIFO within each scope) — a scoped `Dispose` may use the singletons it depends on;
+3. container-owned singletons, LIFO by construction order;
+4. the container-internal root scope last — it owns the scoped/transient instances that singleton factories captured, so it outlives the singletons that captured them.
+
+Step 2 used to run *after* step 3: singletons were disposed before the user root scopes, so a scoped `Dispose` ran against already-disposed singletons. Each group keeps its own inner ordering.
+
 ## Source Generator (PicoDI.Gen)
 
 PicoDI.Gen is **embedded** in `PicoDI.Abs` and activated automatically — no explicit
