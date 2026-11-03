@@ -208,17 +208,53 @@ public sealed partial class SvcScope
         if (fastInstance != null)
             return fastInstance;
 
+        // The factory below runs with nothing stopping it from resolving the very service it is
+        // building: it is deliberately invoked outside SyncLock (see the DCL note above), so the
+        // only record of "this registration is under construction on this thread" is the guard.
+        // Without it the re-entry recurses through ResolveServiceCore until the stack dies —
+        // measured 2140 frames and then `Stack overflow.`, an abort no catch, OnError callback or
+        // log can intercept. Report the cycle by name instead.
+        if (SvcConstructionGuard.IsUnderConstruction(Owner, null, registration))
+        {
+            // Narrow race: another thread may have published the singleton between the read above
+            // and this check (duplicate builds are allowed — the loser's copy is disposed). A
+            // published instance wins over a cycle report: the caller must not be denied a service
+            // that exists.
+            var published = Volatile.Read(ref singletonState.Instance);
+            if (published is not null)
+                return published;
+
+            throw SvcConstructionGuard.CreateCycleException(
+                Owner,
+                null,
+                registration,
+                SvcLifetime.Singleton
+            );
+        }
+
         // Build outside the lock — prevents deadlock when factory transitively
         // resolves a service that depends on this singleton. Singleton factories
         // run against the container-internal root scope (E1 fix) so singletons
         // never capture a possibly short-lived resolving scope.
-        var candidate =
-            registration.Factory != null
-                ? registration.Factory(Owner.GetImplicitRootScope())
-                : throw new PicoDiException(
-                    $"No factory or instance registered for singleton service '{serviceType.FullName}'. "
-                        + FormatSourceGenReminder(serviceType.FullName ?? serviceType.Name)
-                );
+        object candidate;
+        SvcConstructionGuard.Push(Owner, null, registration);
+        try
+        {
+            candidate =
+                registration.Factory != null
+                    ? registration.Factory(Owner.GetImplicitRootScope())
+                    : throw new PicoDiException(
+                        $"No factory or instance registered for singleton service '{serviceType.FullName}'. "
+                            + FormatSourceGenReminder(serviceType.FullName ?? serviceType.Name)
+                    );
+        }
+        finally
+        {
+            // Always pops: a throwing (or cycling) factory must not leave this thread believing the
+            // registration is still under construction, which would make the *next* resolve of it a
+            // false cycle.
+            SvcConstructionGuard.Pop();
+        }
 
         lock (singletonState.SyncLock)
         {
@@ -266,6 +302,18 @@ public sealed partial class SvcScope
         if (Volatile.Read(ref _disposed) != 0)
             throw new ObjectDisposedException(nameof(SvcScope));
 
+        // The same cycle one layer up: the in-flight scoped value is a Lazy, and Lazy re-entrance
+        // surfaces as the nameless `InvalidOperationException: ValueFactory attempted to access the
+        // Value property of this instance.` (review-2026-11-02 finding 4). Consult the per-thread
+        // marker first so the cycle is named before Lazy gets the chance to throw.
+        if (SvcConstructionGuard.IsUnderConstruction(Owner, this, registration))
+            throw SvcConstructionGuard.CreateCycleException(
+                Owner,
+                this,
+                registration,
+                SvcLifetime.Scoped
+            );
+
         var instances = LazyInitializer.EnsureInitialized(ref _scopedInstances);
 
         // Guard: concurrent DisposeAsync may have created an orphan dictionary
@@ -306,16 +354,27 @@ public sealed partial class SvcScope
                     if (Volatile.Read(ref scope._disposed) != 0)
                         throw new ObjectDisposedException(nameof(SvcScope));
 
-                    var instance =
-                        registration.Factory != null
-                            ? registration.Factory(scope)
-                            : throw new PicoDiException(
-                                $"No factory registered for scoped service '{registration.ServiceType.FullName}'. "
-                                    + FormatSourceGenReminder(
-                                        registration.ServiceType.FullName
-                                            ?? registration.ServiceType.Name
-                                    )
-                            );
+                    object instance;
+                    SvcConstructionGuard.Push(scope.Owner, scope, registration);
+                    try
+                    {
+                        instance =
+                            registration.Factory != null
+                                ? registration.Factory(scope)
+                                : throw new PicoDiException(
+                                    $"No factory registered for scoped service '{registration.ServiceType.FullName}'. "
+                                        + FormatSourceGenReminder(
+                                            registration.ServiceType.FullName
+                                                ?? registration.ServiceType.Name
+                                        )
+                                );
+                    }
+                    finally
+                    {
+                        // Always pops: the Lazy caches a factory failure, and the next resolve of a
+                        // *different* service must not inherit a stale "under construction" frame.
+                        SvcConstructionGuard.Pop();
+                    }
 
                     var order = LazyInitializer.EnsureInitialized(ref scope._scopedCreationOrder);
                     order.Enqueue((NextScopedCreationOrder(), instance));

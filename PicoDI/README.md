@@ -324,6 +324,7 @@ All wiring is resolved at compile time — zero reflection. See [PicoDI.Sample.A
 ### Resolution Errors
 
 - **Unregistered service**: `GetService()` throws `PicoDiException`. Use `TryGetService()` / `TryGetServices()` for optional dependencies.
+- **Circular dependency**: a singleton or scoped factory that resolves the service it is constructing — directly or through a chain — throws `PicoDiException` naming the cycle (`A -> B -> A`) instead of overflowing the stack. (Transient-to-transient cycles are still not detected: transients are not tracked as under construction.)
 - **Disposed scope/container**: Throws `ObjectDisposedException`.
 - **Source generator not applied**: Throws `SourceGeneratorRequiredException` for type-based registrations.
 
