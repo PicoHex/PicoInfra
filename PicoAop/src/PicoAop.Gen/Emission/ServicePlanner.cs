@@ -490,7 +490,7 @@ internal static class ServicePlanner
         member switch
         {
             IMethodSymbol method =>
-                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}",
+                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters, method.TypeParameters)}",
             IPropertySymbol { IsIndexer: true } indexer =>
                 $"P:this[]:{ParameterTypes(indexer.Parameters)}",
             IPropertySymbol property => $"P:{property.Name}",
@@ -756,22 +756,36 @@ internal static class ServicePlanner
     /// <c>M&lt;T&gt;() where T : struct</c> (CS0425). Keying on them turns such a
     /// pair into a reported PICO113 collision instead of a dropped member.
     /// </para>
+    /// <para>
+    /// Every type-parameter reference in the key is positional (see
+    /// <see cref="PositionalType"/>): C# keys a signature on the position of a
+    /// type parameter, not on the name a declaration chose, so
+    /// <c>M&lt;T&gt;(T)</c> and <c>M&lt;U&gt;(U)</c> are one member.
+    /// </para>
     /// </summary>
     private static string SignatureKey(ISymbol member) =>
         member switch
         {
             IMethodSymbol method =>
-                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}:{method.ReturnType.ToDisplayString(Fq)}:{ConstraintKey(method)}",
+                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters, method.TypeParameters)}:{PositionalType(method.ReturnType, method.TypeParameters)}:{ConstraintKey(method)}",
             IPropertySymbol property =>
-                $"P:{property.Name}:{ParameterTypes(property.Parameters)}:{property.Type.ToDisplayString(Fq)}:{(property.GetMethod is null ? string.Empty : "g")}{(property.SetMethod is null ? string.Empty : "s")}",
-            IEventSymbol @event => $"E:{@event.Name}:{@event.Type.ToDisplayString(Fq)}",
+                $"P:{property.Name}:{ParameterTypes(property.Parameters)}:{PositionalType(property.Type)}:{(property.GetMethod is null ? string.Empty : "g")}{(property.SetMethod is null ? string.Empty : "s")}",
+            IEventSymbol @event => $"E:{@event.Name}:{PositionalType(@event.Type)}",
             _ => $"{member.Kind}:{member.Name}",
         };
 
     /// <summary>
     /// The constraint set of one generic method as a comparable string
-    /// (<c>class|global::System.IComparable&lt;T&gt;+new</c>); empty for a
+    /// (<c>class|global::System.IComparable&lt;!0&gt;+new</c>); empty for a
     /// non-generic method.
+    /// <para>
+    /// A constraint list is a set, so the constraint types are sorted before
+    /// they are joined: <c>where T : A, B</c> and <c>where T : B, A</c>
+    /// constrain the type parameter identically. Declaration order used to be
+    /// kept, which turned that pair into a PICO113 for a collision that does not
+    /// exist and delegated both members — interception lost with no compiler
+    /// error to show it.
+    /// </para>
     /// </summary>
     private static string ConstraintKey(IMethodSymbol method) =>
         method.TypeParameters.Length == 0
@@ -786,9 +800,11 @@ internal static class ServicePlanner
                             TypeParameterConstraintKind(typeParameter),
                             string.Join(
                                 ",",
-                                typeParameter.ConstraintTypes.Select(type =>
-                                    type.ToDisplayString(Fq)
-                                )
+                                typeParameter
+                                    .ConstraintTypes.Select(type =>
+                                        PositionalType(type, method.TypeParameters)
+                                    )
+                                    .OrderBy(text => text, StringComparer.Ordinal)
                             ),
                             typeParameter.HasConstructorConstraint ? "new" : string.Empty,
                         }
@@ -817,7 +833,7 @@ internal static class ServicePlanner
     private static string SlotKey(PlannedMember member)
     {
         if (member.Method is { } method)
-            return $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}";
+            return $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters, method.TypeParameters)}";
         if (member.Property is { IsIndexer: true } indexer)
             return $"P:this[]:{ParameterTypes(indexer.Parameters)}";
         if (member.Property is { } property)
@@ -825,13 +841,61 @@ internal static class ServicePlanner
         return $"E:{member.Event!.Name}";
     }
 
-    private static string ParameterTypes(ImmutableArray<IParameterSymbol> parameters) =>
+    private static string ParameterTypes(
+        ImmutableArray<IParameterSymbol> parameters,
+        ImmutableArray<ITypeParameterSymbol> typeParameters = default
+    ) =>
         string.Join(
             ",",
-            parameters.Select(p =>
-                $"{p.RefKind}:{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}"
-            )
+            parameters.Select(p => $"{p.RefKind}:{PositionalType(p.Type, typeParameters)}")
         );
+
+    /// <summary>
+    /// A type as it takes part in a signature slot: a reference to one of the
+    /// member's own type parameters is rendered by <em>position</em>
+    /// (<c>!0</c>, <c>!1</c>), because position is what C# keys a signature on.
+    /// Two base interfaces that declare the same member with different type
+    /// parameter names — <c>M&lt;T&gt;(T)</c> and <c>M&lt;U&gt;(U)</c> — are one
+    /// member that one implementation satisfies; printing the names split them
+    /// into two proxy members (CS0111 + CS0121 in the generated file, zero
+    /// diagnostics).
+    /// <para>
+    /// The rendering walks <see cref="ISymbol.ToDisplayParts"/> and substitutes
+    /// the parts that *are* one of the method's own type parameters, so a name
+    /// that also happens to be a type in scope cannot be mistaken for one. The
+    /// positional form is a key only: nothing emitted into the generated file is
+    /// built from this string (the emitters print the symbols' own names).
+    /// </para>
+    /// </summary>
+    private static string PositionalType(
+        ITypeSymbol type,
+        ImmutableArray<ITypeParameterSymbol> typeParameters = default
+    )
+    {
+        // `default(ImmutableArray<T>)` is the *uninitialized* array, and reading
+        // .Length off it throws; properties and events pass no type parameters.
+        if (typeParameters.IsDefaultOrEmpty)
+            return type.ToDisplayString(Fq);
+
+        var sb = new StringBuilder();
+        foreach (var part in type.ToDisplayParts(Fq))
+        {
+            var index = -1;
+            if (part.Symbol is ITypeParameterSymbol typeParameter)
+                for (var i = 0; i < typeParameters.Length; i++)
+                    if (SymbolEqualityComparer.Default.Equals(typeParameters[i], typeParameter))
+                    {
+                        index = i;
+                        break;
+                    }
+
+            if (index < 0)
+                sb.Append(part.ToString());
+            else
+                sb.Append('!').Append(index);
+        }
+        return sb.ToString();
+    }
 
     private static ISymbol SymbolOf(PlannedMember member) =>
         member.Method ?? (ISymbol?)member.Property ?? member.Event!;

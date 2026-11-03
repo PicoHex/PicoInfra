@@ -469,6 +469,281 @@ public class ConflictingInterfaceMemberTests : GeneratorTestBase
         await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// C# keys a generic signature on the *position* of its type parameters, not
+    /// on the names the two interfaces happened to choose: <c>IA.M&lt;T&gt;(T)</c>
+    /// and <c>IB.M&lt;U&gt;(U)</c> are one signature, which a single method
+    /// implements. The planner keyed on the names (<c>ParameterTypes</c> printed
+    /// <c>T</c> vs <c>U</c>), so the pair looked like two members and both were
+    /// emitted:
+    /// <code>
+    /// CS0111: 'Intercepted_IC_CountingInterceptor' already defines a member
+    ///         called 'M' with the same parameter types
+    /// CS0121: The call is ambiguous between 'IA.M&lt;T&gt;(T)' and 'IB.M&lt;U&gt;(U)'
+    /// </code>
+    /// with zero generator diagnostics — a silently non-compiling proxy.
+    /// Pre-existing (it reproduces with no constraints at all).
+    /// review-2026-11-02/rev-aop-5c.md, D-a; probe A1b.
+    /// </summary>
+    [Test]
+    public async Task SameNamedGenericMethodsWithRenamedTypeParameters_CompileAsOneMember()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    int M<T>(T x);
+                }
+
+                public interface IB
+                {
+                    int M<U>(U x);
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    public int M<T>(T x) => 1;
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // One member, not two: no second, explicitly-qualified declaration.
+        var declarations = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("public int M<", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"DECLARATIONS: {string.Join(" || ", declarations)}");
+        await Assert.That(declarations.Count).IsEqualTo(1);
+        await Assert
+            .That(result.GeneratedOutput.Contains("global::IB.M<", StringComparison.Ordinal))
+            .IsFalse();
+
+        // Nothing collided and nothing was lost: the member is still routed.
+        await Assert.That(result.DiagnosticIds.Contains("PICO113")).IsFalse();
+        await Assert.That(result.GeneratedOutput.Contains("new Invocation_IC_M")).IsTrue();
+
+        // The positional form is a key, not text: it never reaches the file.
+        await Assert
+            .That(result.GeneratedOutput.Contains("!0", StringComparison.Ordinal))
+            .IsFalse();
+
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// The same signature, with constraints that only differ by the type
+    /// parameter's name: <c>where T : IComparable&lt;T&gt;</c> and
+    /// <c>where U : IComparable&lt;U&gt;</c> are the same constraint set, so one
+    /// implicit implementation satisfies both. <c>ConstraintKey</c> printed the
+    /// constraint types by name, so the pair keyed differently and took the
+    /// collision branch: <c>PICO113</c> for a collision that does not exist, and
+    /// both members delegated — the calls still compile, but the interceptor is
+    /// silently skipped. review-2026-11-02/rev-aop-5c.md, D-b; probe A2/P2.
+    /// </summary>
+    [Test]
+    public async Task ConstraintRenamedGenericMethods_StayOneInterceptedMember()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    int M<T>()
+                        where T : IComparable<T>;
+                }
+
+                public interface IB
+                {
+                    int M<U>()
+                        where U : IComparable<U>;
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    public int M<T>()
+                        where T : IComparable<T> => 1;
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // No phantom collision for one signature.
+        await Assert.That(result.DiagnosticIds.Contains("PICO113")).IsFalse();
+
+        // One member, and it is routed (delegating both is the silent half of
+        // the defect: the code compiles either way).
+        var declarations = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("public int M<", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"DECLARATIONS: {string.Join(" || ", declarations)}");
+        await Assert.That(declarations.Count).IsEqualTo(1);
+        await Assert.That(result.GeneratedOutput.Contains("new Invocation_IC_M")).IsTrue();
+        await Assert
+            .That(result.GeneratedOutput.Contains("!0", StringComparison.Ordinal))
+            .IsFalse();
+
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// A constraint list is a set: <c>where T : IDisposable, IComparable&lt;T&gt;</c>
+    /// and <c>where U : IComparable&lt;U&gt;, IDisposable</c> constrain the type
+    /// parameter identically. <c>ConstraintKey</c> joined the constraint types in
+    /// declaration order, so reversing them produced a false PICO113 and, worse,
+    /// delegated both members — interception lost with no compiler error to show
+    /// it. review-2026-11-02/rev-aop-5c.md, D-b; probe P3.
+    /// </summary>
+    [Test]
+    public async Task ReversedConstraintOrder_DoesNotSplitTheSignature()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    int M<T>()
+                        where T : IDisposable, IComparable<T>;
+                }
+
+                public interface IB
+                {
+                    int M<U>()
+                        where U : IComparable<U>, IDisposable;
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    public int M<T>()
+                        where T : IComparable<T>, IDisposable => 1;
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        await Assert.That(result.DiagnosticIds.Contains("PICO113")).IsFalse();
+        var declarations = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("public int M<", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"DECLARATIONS: {string.Join(" || ", declarations)}");
+        await Assert.That(declarations.Count).IsEqualTo(1);
+        await Assert.That(result.GeneratedOutput.Contains("new Invocation_IC_M")).IsTrue();
+
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// The same positional rule for the *return* type: <c>T M&lt;T&gt;()</c> and
+    /// <c>U M&lt;U&gt;()</c> are one member too, so the key has to render the
+    /// return type positionally as well — printing <c>T</c> vs <c>U</c> leaves
+    /// the pair looking distinct and emits both (CS0111: the return type does not
+    /// separate two methods that take no parameters).
+    /// </summary>
+    [Test]
+    public async Task SameNamedGenericMethodsReturningTheirTypeParameter_CompileAsOneMember()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    T M<T>(T x);
+                }
+
+                public interface IB
+                {
+                    U M<U>(U x);
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    public T M<T>(T x) => x;
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        var declarations = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains(" M<T>(T x)", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"DECLARATIONS: {string.Join(" || ", declarations)}");
+        await Assert.That(declarations.Count).IsEqualTo(1);
+        await Assert
+            .That(result.GeneratedOutput.Contains("global::IB.M<", StringComparison.Ordinal))
+            .IsFalse();
+        await Assert.That(result.DiagnosticIds.Contains("PICO113")).IsFalse();
+        await Assert.That(result.GeneratedOutput.Contains("new Invocation_IC_M")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
     private static List<string> ReadCalls(Assembly assembly) =>
         (List<string>)assembly.GetType("CountingInterceptor")!.GetField("Calls")!.GetValue(null)!;
 }
