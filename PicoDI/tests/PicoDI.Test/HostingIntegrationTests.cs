@@ -256,7 +256,13 @@ public class HostingIntegrationTests
         // Act — DisposeAsync must call StopAsync before cleaning up
         await container.DisposeAsync();
 
-        // Assert — StopAsync was called as part of the disposal pipeline
+        // Assert — StopAsync was called as part of the disposal pipeline.
+        // This pins THAT the stop ran. The ORDER the name claims (stop before the container is
+        // torn down) is pinned at the pipeline itself, in
+        // ContainerDisposalOrderTests.ContainerDisposal_StopsHostedSvc_ThenUserScope_ThenSingleton,
+        // which compares the four disposal markers with CollectionOrdering.Matching; moving the
+        // stop group after the scope/singleton passes turns that test red and leaves this one
+        // green (test-validity audit row 6, measured).
         await Assert.That(trackingSvc.Stopped).IsTrue();
     }
 
@@ -386,6 +392,53 @@ public class HostingIntegrationTests
             phase == failingPhase
                 ? throw new InvalidOperationException($"Fail:{phase}")
                 : Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Lifecycle service whose stop phase is genuinely asynchronous: <see cref="Stopped"/> is set
+    /// only after <see cref="Release"/> opens the gate. A service that sets the flag synchronously
+    /// (`Stopped = true; return Task.CompletedTask;`) cannot tell a waited stop from a
+    /// fire-and-forget one — the flag is already true when the abandoned call returns
+    /// (test-validity audit row 9).
+    /// </summary>
+    private sealed class GatedStopLifecycleSvc : IHostedLifecycleSvc
+    {
+        private readonly TaskCompletionSource _release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private readonly TaskCompletionSource _stopEntered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public bool Started { get; private set; }
+        public bool Stopped { get; private set; }
+
+        /// <summary>Completes once the stop phase has started and is parked on the gate.</summary>
+        public Task StopEntered => _stopEntered.Task;
+
+        /// <summary>Opens the gate, letting the stop phase run to completion.</summary>
+        public void Release() => _release.TrySetResult();
+
+        public Task StartingAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task StartAsync(CancellationToken ct)
+        {
+            Started = true;
+            return Task.CompletedTask;
+        }
+
+        public Task StartedAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task StoppingAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public async Task StopAsync(CancellationToken ct)
+        {
+            _stopEntered.TrySetResult();
+            await _release.Task.WaitAsync(ct).ConfigureAwait(false);
+            Stopped = true;
+        }
+
+        public Task StoppedAsync(CancellationToken ct) => Task.CompletedTask;
     }
 
     private sealed class TrackingLifecycleSvc : IHostedLifecycleSvc
@@ -572,38 +625,67 @@ public class HostingIntegrationTests
     [Test]
     public async Task StopHostedServicesAsync_AwaitReturnsAfterStop()
     {
-        // Arrange
+        // Arrange — a service whose stop phase is ASYNC: `Stopped` only becomes true after the
+        // gate below is opened. The old body used a service that set the flag synchronously, so
+        // dropping the `await` on the stop (fire-and-forget) left this test green — the flag was
+        // already set when the abandoned call returned (test-validity audit row 9).
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
-        var svc = new TrackingLifecycleSvc();
+        var svc = new GatedStopLifecycleSvc();
 
-        container.RegisterHostedSvc<TrackingLifecycleSvc>(_ => svc);
+        container.RegisterHostedSvc<GatedStopLifecycleSvc>(_ => svc);
         container.Build();
         var host = new SvcHost(container);
 
         await host.StartAsync();
 
         // Act
-        await host.StopAsync();
+        var stop = host.StopAsync();
 
-        // Assert — after StopAsync completes, Stopped is true
+        // Assert — the returned task is still PENDING while the stop phase runs: the phase is
+        // awaited, not handed to the thread pool.
+        await svc.StopEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert
+            .That(stop.IsCompleted)
+            .IsFalse()
+            .Because("StopAsync must not complete while a stop phase is still running");
+
+        svc.Release();
+        await stop.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Assert — and the stop phase ran to completion before the await returned
         await Assert.That(svc.Stopped).IsTrue();
     }
 
     [Test]
     public async Task Dispose_WaitsForHostedServicesToStop()
     {
-        // Arrange
-        var svc = new TrackingLifecycleSvc();
+        // Arrange — the same gated service, so only a disposal that really waits can observe
+        // Stopped == true. This is the HOST disposal entry point (SvcHost.DisposeAsync); it used
+        // to await container.DisposeAsync() instead, a byte-identical twin of the next test, so
+        // this half of the family covered nothing (test-validity audit row 9). PicoDI exposes no
+        // synchronous Dispose — ISvcContainer/IHost/ISvcScope are IAsyncDisposable only.
+        var svc = new GatedStopLifecycleSvc();
         var container = new SvcContainer(autoConfigureFromGenerator: false);
 
-        container.RegisterHostedSvc<TrackingLifecycleSvc>(_ => svc);
+        container.RegisterHostedSvc<GatedStopLifecycleSvc>(_ => svc);
         container.Build();
 
-        await new SvcHost(container).StartAsync();
+        var host = new SvcHost(container);
+        await host.StartAsync();
         await Assert.That(svc.Started).IsTrue();
 
-        // Act — async Dispose must call StopAsync and actually wait for it
-        await container.DisposeAsync();
+        // Act — disposing the host must call StopAsync and actually wait for it
+        var dispose = host.DisposeAsync();
+
+        // Assert — disposal is still in flight while the stop phase runs
+        await svc.StopEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert
+            .That(dispose.IsCompleted)
+            .IsFalse()
+            .Because("host disposal must wait for the hosted services, not abandon them");
+
+        svc.Release();
+        await dispose.AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         // Assert — after Dispose returns, the service has stopped
         await Assert.That(svc.Stopped).IsTrue();
@@ -612,18 +694,28 @@ public class HostingIntegrationTests
     [Test]
     public async Task DisposeAsync_WaitsForHostedServicesToStop()
     {
-        // Arrange
-        var svc = new TrackingLifecycleSvc();
+        // Arrange — the container entry point of the same contract (the pipeline below SvcHost).
+        var svc = new GatedStopLifecycleSvc();
         var container = new SvcContainer(autoConfigureFromGenerator: false);
 
-        container.RegisterHostedSvc<TrackingLifecycleSvc>(_ => svc);
+        container.RegisterHostedSvc<GatedStopLifecycleSvc>(_ => svc);
         container.Build();
 
         await new SvcHost(container).StartAsync();
         await Assert.That(svc.Started).IsTrue();
 
-        // Act — async Dispose must call StopAsync and actually wait for it
-        await container.DisposeAsync();
+        // Act — DisposeAsync must call StopAsync and actually wait for it
+        var dispose = container.DisposeAsync();
+
+        // Assert — disposal is still in flight while the stop phase runs
+        await svc.StopEntered.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert
+            .That(dispose.IsCompleted)
+            .IsFalse()
+            .Because("DisposeAsync must wait for the hosted services, not abandon them");
+
+        svc.Release();
+        await dispose.AsTask().WaitAsync(TimeSpan.FromSeconds(10));
 
         // Assert — after DisposeAsync returns, the service has stopped
         await Assert.That(svc.Stopped).IsTrue();
