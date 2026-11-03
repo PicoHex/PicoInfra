@@ -70,6 +70,11 @@ public class JsonLogSinkRaceTests
 
     /// <summary>
     /// Concurrent writes without dispose — baseline sanity check.
+    /// Genuinely concurrent: every write is started on its own thread-pool thread BEFORE
+    /// anything is awaited. The previous version handed the lazy <c>Select</c> straight to
+    /// <c>Task.WhenAll</c>, which enumerates it and awaits each already-completed task in
+    /// turn — and <c>JsonLogSink.WriteAsync</c> has no <c>await</c>, so no two writes ever
+    /// overlapped and the test could not observe a race.
     /// </summary>
     [Test]
     public async Task WriteAsync_MultipleConcurrentWrites_AllSucceed()
@@ -79,23 +84,33 @@ public class JsonLogSinkRaceTests
 
         var writeTasks = Enumerable
             .Range(0, 8)
-            .Select(_ =>
-                sink.WriteAsync(
-                    new LogEntry
-                    {
-                        Timestamp = DateTimeOffset.UtcNow,
-                        Level = LogLevel.Debug,
-                        Message = "Concurrent write",
-                        Category = "Baseline",
-                    }
+            .Select(i =>
+                Task.Run(() =>
+                    sink.WriteAsync(
+                        new LogEntry
+                        {
+                            Timestamp = DateTimeOffset.UtcNow,
+                            Level = LogLevel.Debug,
+                            Message = $"Concurrent write {i}",
+                            Category = "Baseline",
+                        }
+                    )
                 )
-            );
+            )
+            .ToArray();
 
         await Task.WhenAll(writeTasks);
         await sink.DisposeAsync();
 
         var lines = await File.ReadAllLinesAsync(tempFile);
         await Assert.That(lines.Length).IsEqualTo(8);
+
+        // All eight writes must have landed — not eight copies of whichever one won.
+        for (var i = 0; i < 8; i++)
+        {
+            var expected = $"Concurrent write {i}";
+            await Assert.That(lines.Any(line => line.Contains(expected))).IsTrue();
+        }
 
         if (File.Exists(tempFile))
             File.Delete(tempFile);

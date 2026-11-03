@@ -90,8 +90,24 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
         if (dir is not null && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
-        _stream = new FileStream(_filePath, FileMode.Append, FileAccess.Write, FileShare.Read);
-        _writer = new StreamWriter(_stream, Encoding.UTF8) { AutoFlush = false };
+        // FileShare.ReadWrite, not Read: the live file stays openable by another process that
+        // shares it (a rotator, an external tool). Windows sharing is bilateral, so a reader
+        // still has to share write itself — File.ReadAllText fails on any open write handle,
+        // whatever this sink shares.
+        _stream = new FileStream(_filePath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        // UTF8Encoding(false): a StreamWriter over an empty append target emits the preamble
+        // (it only suppresses it when the seekable stream is already positioned), so record 0
+        // was literally "U+FEFF{...}", which strict readers (JSON.parse, jq) reject.
+        // NewLine: NDJSON is one JSON value per LF-terminated line, and StreamWriter.NewLine
+        // would be CRLF on Windows.
+        _writer = new StreamWriter(
+            _stream,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+        )
+        {
+            AutoFlush = false,
+            NewLine = "\n",
+        };
     }
 
     private static void WriteJsonEntry(IBufferWriter<byte> writer, LogEntry entry)
@@ -123,7 +139,7 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
             jw.WritePropertyName("Properties");
             jw.WriteStartObject();
             foreach (var prop in entry.Properties)
-                WriteProperty(ref jw, prop.Key, prop.Value?.ToString());
+                WriteProperty(ref jw, prop.Key, FormatValue(prop.Value));
             jw.WriteEndObject();
         }
 
@@ -132,12 +148,21 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
             jw.WritePropertyName("ScopeProperties");
             jw.WriteStartObject();
             foreach (var prop in entry.ScopeProperties)
-                WriteProperty(ref jw, prop.Key, prop.Value?.ToString());
+                WriteProperty(ref jw, prop.Key, FormatValue(prop.Value));
             jw.WriteEndObject();
         }
 
         jw.WriteEndObject();
     }
+
+    // Values are stringified for JSON, so the format has to be culture-stable: object.ToString()
+    // is CurrentCulture, which turned a double 1.5 into "1,5" and a DateTime into
+    // "02.01.2025 03:04:05" under de-DE — the same binary emitting different bytes per locale,
+    // with the value type unrecoverable for the consumer. Everything else here is already
+    // culture-stable ("O" timestamps, Level.ToString()); the escaping itself is unchanged
+    // because the result still goes through JsonWriter.WriteString.
+    private static string? FormatValue(object? value) =>
+        value is null ? null : Convert.ToString(value, CultureInfo.InvariantCulture);
 
     // BY REF, because JsonWriter is a ref struct: a by-value parameter is a COPY, and every
     // byte (plus the "property name is pending" flag) it writes dies with the callee. Until
