@@ -251,6 +251,8 @@ await host.StopAsync();
 
 Startup order follows registration order. Shutdown reverses it (LIFO). Each hosted service is a one-shot — once stopped, it cannot be restarted without creating a new container.
 
+**Every registration counts, not every type (behaviour change).** A hosted type registered more than once — two instances, two factories, or the same implementation registered twice with different configuration — starts **all** of its registrations in registration order and stops them in reverse order. Only the last registration per type used to be tracked, so the earlier instances never started and never stopped while the host reported a successful start. The one exception is the same *object* registered twice: one object starts and stops once, because the start and stop phases run at most once per hosted service instance.
+
 **A failed start reaches the caller (behaviour change).** `StartAsync` follows the .NET host contract: when a hosted service's `StartAsync` (or `StartingAsync`/`StartedAsync`) throws, the caller's `StartAsync` faults with that same exception — same type, message and stack trace, not wrapped, so `catch (InvalidOperationException)` around `StartAsync` keeps working. Previously the exception went only to `OnError` (default `null`), so a failed start reported success and `SvcHostBuilder.BuildAsync` handed back a "started" host whose service had never started. The failure also aborts the sequence:
 
 - services registered after the failing one are **not** started;

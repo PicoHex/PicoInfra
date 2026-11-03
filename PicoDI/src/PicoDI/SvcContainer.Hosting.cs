@@ -54,7 +54,13 @@ public sealed partial class SvcContainer
         Dictionary<Type, List<SvcRuntimeRegistration>> cache
     )
     {
-        var lastByType = new Dictionary<Type, SvcRuntimeRegistration>();
+        // Identity is the REGISTRATION, not the service type. A hosted type may be registered
+        // more than once — two instances, two factories, the same implementation registered twice
+        // with different configuration — and every one of those registrations is a live service
+        // that must start and stop. Keeping only the last registration per type silently dropped
+        // the earlier ones: they never started and never stopped, and the host still reported a
+        // successful start.
+        List<SvcRuntimeRegistration>? hosted = null;
         foreach (var (_, registrations) in cache)
         {
             foreach (var registration in registrations)
@@ -70,15 +76,13 @@ public sealed partial class SvcContainer
                     );
                 }
 
-                lastByType[registration.ServiceType] = registration;
+                // Registration order is start order; the stop pass walks this list backwards.
+                (hosted ??= []).Add(registration);
             }
         }
 
-        if (lastByType.Count > 0)
-            Volatile.Write(
-                ref _hostedRegistrations,
-                new List<SvcRuntimeRegistration>(lastByType.Values)
-            );
+        if (hosted is not null)
+            Volatile.Write(ref _hostedRegistrations, hosted);
     }
 
     /// <summary>
@@ -137,6 +141,12 @@ public sealed partial class SvcContainer
         // backwards, so it sees exactly the services that are actually up.
         var started = new List<(SvcRuntimeRegistration Registration, object Instance)>();
 
+        // One start per object. Two registrations can hand back the same instance (the same
+        // object registered twice): starting it twice would be a second start on a service that
+        // is already running, while the stop pass runs at most once per instance — start and stop
+        // would then be asymmetric.
+        var startedInstances = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
         // Iterate in registration order (forward) — matches IHostedService contract.
         for (int i = 0; i < registrations.Count; i++)
         {
@@ -150,8 +160,14 @@ public sealed partial class SvcContainer
                 if (instance is null)
                 {
                     _hostingScope ??= (SvcScope)CreateScope();
-                    instance = _hostingScope.GetService(registration.ServiceType);
+                    // Resolve THIS registration's instance. Resolving by service type answers
+                    // with the last registration's singleton, which would start that one twice
+                    // and leave the other registration's instance never started.
+                    instance = _hostingScope.ResolveRegistrationInstance(registration);
                 }
+
+                if (!startedInstances.Add(instance))
+                    continue;
 
                 if (instance is IHostedLifecycleSvc lifecycle)
                 {

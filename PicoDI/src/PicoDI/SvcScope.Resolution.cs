@@ -180,6 +180,22 @@ public sealed partial class SvcScope
     }
 
     /// <summary>
+    /// Resolves the singleton of one specific <paramref name="registration"/>, not of its
+    /// service type.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ResolveServiceCore"/> answers "the instance for this type" and therefore always
+    /// answers with the last registration's singleton. Hosted services are tracked per
+    /// registration, so a hosted type registered twice has two live instances and each must be
+    /// resolved through its own registration: resolving by type would hand the last singleton to
+    /// every entry — starting that one twice while the other never starts at all.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal object ResolveRegistrationInstance(SvcRuntimeRegistration registration) =>
+        registration.GetSingletonInstance()
+        ?? GetOrCreateSingleton(registration.ServiceType, registration);
+
+    /// <summary>
     /// Creates a singleton instance with deadlock-safe double-checked locking.
     /// The factory is invoked OUTSIDE the lock. If two threads race to create,
     /// the winner's result is stored; the loser's duplicate is disposed.
