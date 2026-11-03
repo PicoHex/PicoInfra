@@ -261,6 +261,8 @@ Startup order follows registration order. Shutdown reverses it (LIFO). Each host
 
 **A failed stop also reaches the caller (behaviour change).** `StopAsync` keeps its fault-tolerant shutdown — every service is still stopped — and then throws an `AggregateException` carrying the individual failures, the shape `Microsoft.Extensions.Hosting` uses for `Host.StopAsync`. The stop phases run at most once per hosted service instance, so a service is never stopped twice (and never after a failed start). `DisposeAsync` never throws: its internal stop reports to `OnError` instead.
 
+**`new SvcHost(container)` needs no explicit `Build()` (behaviour change).** `StartAsync` builds the container first — the same lazy build `CreateScope()` performs — because `Build()` is what collects the hosted-service registrations. Without it, a host over a container that had not been built started nothing and still consumed its one-shot start, so even after a later `Build()` a second `StartAsync` started nothing (silently). `Build()` freezes the registrations, so register every service before the first `StartAsync`; on a disposed container `StartAsync` throws `ObjectDisposedException` and the one-shot start is *not* consumed. `SvcHostBuilder.BuildAsync` is unaffected — it already builds explicitly.
+
 ## Interceptor / AOP (Compile-Time Decorators)
 
 PicoDI.Gen is **embedded** in PicoDI.Abs and runs automatically — no separate
@@ -373,7 +375,7 @@ PicoDI is designed for concurrent use:
 
 - **Registration**: Serialized under lock. Must complete before `Build()`.
 - **`Build()`**: Idempotent, and serialized per container by a dedicated build gate. Freezes the registration cache into a lock-free `FrozenDictionary`; later calls are a no-op.
-- **Lazy build**: With `autoConfigureFromGenerator: true` (the default) the container may never be built explicitly — the first `CreateScope()` / `GetImplicitRootScope()` triggers `Build()`. Concurrent first callers wait on the build gate, so no caller can freeze the container while the deferred source-generator configurators are still calling `Register()`.
+- **Lazy build**: With `autoConfigureFromGenerator: true` (the default) the container may never be built explicitly — the first `CreateScope()` / `GetImplicitRootScope()` / `IHost.StartAsync()` triggers `Build()`. Concurrent first callers wait on the build gate, so no caller can freeze the container while the deferred source-generator configurators are still calling `Register()`. `StartAsync` builds *before* it consumes its one-shot start, so a host over an unbuilt container starts its services (it used to start nothing and burn the one-shot); a disposed container faults `StartAsync` with `ObjectDisposedException` instead, and the one-shot is not consumed.
 - **Deferred auto-configuration**: Generator configurators run outside the registration lock (they call `Register()`) but inside the build gate; `Register()` takes only the registration lock, so the gate → registration lock order cannot self-deadlock.
 - **Resolution**: Lock-free reads. Singleton creation uses deadlock-safe double-checked locking. Scoped instances use `ConcurrentDictionary` + `Lazy<T>`.
 - **Disposal**: Idempotent. `DisposeAsync()` can be called concurrently and multiple times safely.

@@ -93,8 +93,19 @@ public sealed partial class SvcContainer
     /// stopped (later start/stop calls are no-ops). The same failure is also reported to
     /// <see cref="OnError"/>.
     /// </exception>
+    /// <exception cref="ObjectDisposedException">The container has already been disposed.</exception>
     internal async Task StartHostedServicesAsync(CancellationToken cancellationToken = default)
     {
+        // Lazy build, matching CreateScope() and GetImplicitRootScope(): Build() is what
+        // populates _hostedRegistrations. Without this, a SvcHost over a container that was
+        // never built (the public `new SvcHost(container)` entry point) read a null list,
+        // started nothing, and still consumed the one-shot state — so even after a later
+        // Build() a second StartAsync could never start anything (review-2026-11-02
+        // finding 4). The call is idempotent and cheap once the container is frozen, and it
+        // runs BEFORE the one-shot transition so a failure here (a disposed container throws
+        // ObjectDisposedException) does not consume the single start.
+        Build();
+
         if (!TryTransitionToStarted())
             return;
 
