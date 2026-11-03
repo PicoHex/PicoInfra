@@ -46,6 +46,7 @@ await scheduler.StopAsync();
 | `Register(jobId, cron, sink, payload?, options?)` | Register or OVERWRITE (new lifecycle, counters cleared) |
 | `Pause / Resume / Reschedule / Unregister(jobId)` | Management — unknown ids are silent |
 | `Snapshot` | CQS read — never blocks, never throws |
+| `IsRunning` | true while the tick loop is alive — a loop that ended (stopped or faulted) reads false |
 | `ITriggerSink.FireAsync(jobId, dueUtc, payload, ct)` | Trigger port — one per job, multi-type coexistence |
 
 ## Semantics (summary)

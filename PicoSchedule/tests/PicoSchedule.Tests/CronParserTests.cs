@@ -138,4 +138,76 @@ public sealed class CronParserTests
         await Assert.That(() => CronPattern.Parse("0 0 * * ,")).Throws<ArgumentException>();
         await Assert.That(() => CronPattern.Parse("0 0 * , *")).Throws<ArgumentException>();
     }
+
+    [Test]
+    public async Task DowSeven_IsSunday_SameAnswerAsZeroAndAlias()
+    {
+        // Vixie cron accepts 7 as Sunday. The parser set BIT 7, but DowHits
+        // indexes by (int)DayOfWeek = 0..6, so '0 5 * * 7' matched nothing and
+        // NextFire's 400-year search threw InvalidOperationException out of
+        // Register (review finding 2).
+        var after = new DateTimeOffset(2026, 11, 3, 0, 0, 0, TimeSpan.Zero); // a Tuesday
+        var seven = CronPattern.Parse("0 5 * * 7").NextFire(after, TimeZoneInfo.Utc);
+        var zero = CronPattern.Parse("0 5 * * 0").NextFire(after, TimeZoneInfo.Utc);
+        var alias = CronPattern.Parse("0 5 * * sun").NextFire(after, TimeZoneInfo.Utc);
+
+        await Assert.That(seven).IsEqualTo(new DateTimeOffset(2026, 11, 8, 5, 0, 0, TimeSpan.Zero)); // Sunday
+        await Assert.That(zero).IsEqualTo(seven);
+        await Assert.That(alias).IsEqualTo(seven);
+    }
+
+    [Test]
+    public async Task DowRangeIncludingSeven_IncludesSunday_AndZeroToSevenIsEveryDay()
+    {
+        // '5-7' = Fri, Sat, Sun (bit 7 must fold onto Sunday, not vanish).
+        var range = CronPattern.Parse("0 5 * * 5-7");
+        await Assert
+            .That(range.Matches(new DateTimeOffset(2026, 11, 6, 5, 0, 0, TimeSpan.Zero)))
+            .IsTrue(); // Friday
+        await Assert
+            .That(range.Matches(new DateTimeOffset(2026, 11, 7, 5, 0, 0, TimeSpan.Zero)))
+            .IsTrue(); // Saturday
+        await Assert
+            .That(range.Matches(new DateTimeOffset(2026, 11, 8, 5, 0, 0, TimeSpan.Zero)))
+            .IsTrue(); // Sunday — the dead bit used to hide it
+        await Assert
+            .That(range.Matches(new DateTimeOffset(2026, 11, 9, 5, 0, 0, TimeSpan.Zero)))
+            .IsFalse(); // Monday
+
+        // '0-7' is the full week (it degraded to "every day" by accident — the
+        // wildcard test counted the dead bit; it must be every day on purpose).
+        var all = CronPattern.Parse("* * * * 0-7");
+        for (var day = 0; day < 7; day++)
+        {
+            await Assert
+                .That(all.Matches(new DateTimeOffset(2026, 11, 2 + day, 0, 0, 0, TimeSpan.Zero)))
+                .IsTrue();
+        }
+
+        // A dow list is a RESTRICTION, not the '*' wildcard: with a restricted
+        // dom the OR rule still applies, so '0 0 13 * 0-6' matches every day
+        // (all seven days selected = OR always true). Folding 7 onto 0 must not
+        // make '0-6' indistinguishable from '*'.
+        var orDays = CronPattern.Parse("0 0 13 * 0-6");
+        await Assert
+            .That(orDays.Matches(new DateTimeOffset(2026, 11, 10, 0, 0, 0, TimeSpan.Zero)))
+            .IsTrue(); // Tuesday the 10th — matched through the dow arm
+    }
+
+    [Test]
+    public async Task DowNormalisation_KeepsRejectionsAndLeapDayRegression()
+    {
+        // The 7 -> Sunday fold must not widen the accepted range.
+        await Assert.That(() => CronPattern.Parse("*/0 * * * *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 0 * * 0-70")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("70 5 * * *")).Throws<ArgumentException>();
+        await Assert.That(() => CronPattern.Parse("0 5 * * 8")).Throws<ArgumentException>();
+
+        var leapDay = CronPattern.Parse("0 0 29 2 *");
+        var next = leapDay.NextFire(
+            new DateTimeOffset(2026, 11, 8, 0, 0, 0, TimeSpan.Zero),
+            TimeZoneInfo.Utc
+        );
+        await Assert.That(next).IsEqualTo(new DateTimeOffset(2028, 2, 29, 0, 0, 0, TimeSpan.Zero));
+    }
 }

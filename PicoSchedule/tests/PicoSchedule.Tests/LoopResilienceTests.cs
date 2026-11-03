@@ -85,6 +85,37 @@ public sealed class LoopResilienceTests
         await Assert.That(entries.Any(e => e.JobId == bombedId && e.Level == "Error")).IsTrue();
     }
 
+    [Test]
+    public async Task ThrowingLogCallback_PlusTransientTickFailure_LoopKeepsFiring()
+    {
+        // Finding 1: the inner handler's ONLY statement reported through
+        // _log?.Invoke, so a throwing host log callback escaped RunLoopAsync and
+        // the loop task died unobserved — every job stops, silently, forever.
+        // Reporting must be best-effort: one transient flush failure plus one
+        // bad log delivery must still leave the scheduler firing.
+        var clock = new FakeClock(Start);
+        var scheduler = new Scheduler(
+            new SchedulerOptions
+            {
+                Clock = clock,
+                Log = _ => throw new InvalidOperationException("host log sink exploded"),
+                TickInterval = TimeSpan.FromMilliseconds(30),
+            }
+        );
+        var sink = new CountingSink();
+        scheduler.Register(Guid.CreateVersion7(), "* * * * *", sink, null, Utc);
+        scheduler.BombFlushNextTick = true; // one transient tick failure
+        scheduler.Start();
+
+        await WaitUntilAsync(() => !scheduler.BombFlushNextTick); // the loop hit the bomb
+        clock.Advance(TimeSpan.FromMinutes(2)); // a fire is now due
+        await Task.Delay(500); // ~16 ticks later
+
+        await Assert.That(sink.Fired).IsGreaterThan(0);
+        await Assert.That(scheduler.IsRunning).IsTrue();
+        await scheduler.StopAsync();
+    }
+
     private sealed class CountingSink : ITriggerSink
     {
         public int Fired;

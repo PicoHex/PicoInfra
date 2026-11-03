@@ -71,6 +71,11 @@ public sealed class Scheduler
         return snap;
     }
 
+    /// <summary>True while the background tick loop is alive. A loop that ended
+    /// (stopped, or faulted) reads false, so a host can notice a scheduler that
+    /// would otherwise go silent forever (review finding 1).</summary>
+    public bool IsRunning => _running && _loopTask is { IsCompleted: false };
+
     /// <summary>Starts the background tick loop. One-shot lifecycle: only
     /// valid before the first Stop — a stopped scheduler cannot be restarted
     /// (a host restart creates a new instance).</summary>
@@ -90,7 +95,28 @@ public sealed class Scheduler
         }
         // Capture the source locally: StopAsync nulls _loopCts, and a
         // start-then-immediate-stop race must not NRE inside the loop lambda.
-        _ = _loopTask = Task.Run(() => RunLoopAsync(cts.Token));
+        var loop = Task.Run(() => RunLoopAsync(cts.Token));
+        _loopTask = loop;
+        // OBSERVE the loop task: the host never awaits it, so a fault used to
+        // vanish and the scheduler simply stopped firing (review finding 1). The
+        // loop contains per-tick failures itself; this surfaces anything that
+        // still escaped, at the same moment IsRunning turns false.
+        _ = loop.ContinueWith(
+            static (completed, state) =>
+            {
+                var scheduler = (Scheduler)state!;
+                if (completed.IsFaulted)
+                    scheduler.TryLog(
+                        Guid.Empty,
+                        "Critical",
+                        $"tick loop faulted: {completed.Exception?.GetBaseException().Message}"
+                    );
+            },
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     /// <summary>Stops the loop and waits for in-flight sink calls to finish
@@ -116,9 +142,7 @@ public sealed class Scheduler
             }
             catch (TimeoutException)
             {
-                _log?.Invoke(
-                    new ScheduleLogEntry(_clock.UtcNow, Guid.Empty, "Warn", "stop wait timed out")
-                );
+                TryLog(Guid.Empty, "Warn", "stop wait timed out");
             }
         }
         cts?.Dispose(); // cancel → join → dispose: token source never outlives the loop wait
@@ -137,14 +161,7 @@ public sealed class Scheduler
             }
             catch (TimeoutException)
             {
-                _log?.Invoke(
-                    new ScheduleLogEntry(
-                        _clock.UtcNow,
-                        Guid.Empty,
-                        "Warn",
-                        "in-flight sink wait timed out"
-                    )
-                );
+                TryLog(Guid.Empty, "Warn", "in-flight sink wait timed out");
             }
             catch
             {
@@ -168,31 +185,36 @@ public sealed class Scheduler
     {
         var opts = options ?? new ScheduleJobOptions();
         var cron = CronPattern.Parse(cronExpression); // throws ArgumentException
+        var tz = opts.ResolvedTz;
+        // Next-fire is computed BEFORE the wheel is touched, and outside _gate
+        // (the search is the expensive part). The overwrite path used to remove
+        // the old entry first: when this computation threw, _byJobId still
+        // pointed at an entry that was no longer in the wheel, so Snapshot
+        // reported the job enabled with a next-fire that could never happen
+        // (review finding 3).
+        ThrowIfNextFireBombed(jobId);
+        var next = NextFireTracked(cron, _clock.UtcNow, tz);
         var entry = new JobEntry
         {
             JobId = jobId,
             Sink = sink,
             Payload = payload ?? new Dictionary<string, string?>(),
             Cron = cron,
-            Tz = opts.ResolvedTz,
+            Tz = tz,
             Enabled = opts.Enabled,
-            NextFireUtc = default,
+            NextFireUtc = next,
         };
 
         lock (_gate)
         {
             if (_byJobId.TryGetValue(jobId, out var existing))
             {
-                // Overwrite: remove old entry from its slot first.
-                if (existing.Slot is { } oldSlot && _wheel.TryGetValue(oldSlot, out var list))
-                {
-                    list.Remove(existing.Entry);
-                    if (list.Count == 0)
-                        _wheel.Remove(oldSlot); // empty-slot pruning (§5)
-                }
+                // Overwrite: the replacement's next-fire is already known, so
+                // the old entry is swapped out with no window in which the job
+                // is unscheduled (empty-slot pruning happens inside the helper).
+                RemoveFromSlot(existing.Slot, existing.Entry);
             }
-            entry.NextFireUtc = NextFireTracked(entry.Cron, _clock.UtcNow, entry.Tz);
-            var slot = SlotOf(entry.NextFireUtc);
+            var slot = SlotOf(next);
             AddToSlot(slot, entry);
             _byJobId[jobId] = (slot, entry);
             _expressionText[jobId] = cronExpression;
@@ -231,14 +253,15 @@ public sealed class Scheduler
         {
             if (!_byJobId.TryGetValue(jobId, out var existing))
                 return; // silent
+            // Compute before flipping Enabled: a throw must leave the stub PAUSED,
+            // not "enabled with a next-fire that is not on the wheel" — the same
+            // invariant as Register (review finding 3).
+            ThrowIfNextFireBombed(jobId);
+            var next = NextFireTracked(existing.Entry.Cron, _clock.UtcNow, existing.Entry.Tz);
             existing.Entry.Enabled = true;
-            existing.Entry.NextFireUtc = NextFireTracked(
-                existing.Entry.Cron,
-                _clock.UtcNow,
-                existing.Entry.Tz
-            );
+            existing.Entry.NextFireUtc = next;
             existing.Entry.IntervalEstimate = null; // new fire cycle — recompute lazily
-            var slot = SlotOf(existing.Entry.NextFireUtc);
+            var slot = SlotOf(next);
             AddToSlot(slot, existing.Entry);
             _byJobId[jobId] = (slot, existing.Entry);
             MarkDirty();
@@ -255,11 +278,16 @@ public sealed class Scheduler
         {
             if (!_byJobId.TryGetValue(jobId, out var existing))
                 return; // silent
+            // Compute before the wheel is touched — "invalid pattern throws and
+            // leaves the entry untouched" must hold for a NextFire throw too
+            // (review finding 3, same invariant).
+            ThrowIfNextFireBombed(jobId);
+            var next = NextFireTracked(cron, _clock.UtcNow, existing.Entry.Tz);
             RemoveFromSlot(existing.Slot, existing.Entry);
             existing.Entry.Cron = cron;
-            existing.Entry.NextFireUtc = NextFireTracked(cron, _clock.UtcNow, existing.Entry.Tz);
+            existing.Entry.NextFireUtc = next;
             existing.Entry.IntervalEstimate = null; // cron changed — stale estimate
-            var slot = SlotOf(existing.Entry.NextFireUtc);
+            var slot = SlotOf(next);
             AddToSlot(slot, existing.Entry);
             _byJobId[jobId] = (slot, existing.Entry);
             _expressionText[jobId] = newCronExpression;
@@ -546,7 +574,7 @@ public sealed class Scheduler
         {
             entry.ConsecutiveFailures++;
             entry.LastError = ex.Message;
-            _log?.Invoke(new ScheduleLogEntry(_clock.UtcNow, entry.JobId, "Error", ex.Message));
+            TryLog(entry.JobId, "Error", ex.Message);
             MarkDirty();
 
             if (entry.Enabled && entry.ConsecutiveFailures >= _options.MaxConsecutiveFailures)
@@ -561,19 +589,16 @@ public sealed class Scheduler
                     _byJobId[entry.JobId] = (null, entry);
                     MarkDirty();
                 }
-                _log?.Invoke(
-                    new ScheduleLogEntry(
-                        _clock.UtcNow,
-                        entry.JobId,
-                        "Warn",
-                        $"auto-paused after {entry.ConsecutiveFailures} consecutive failures"
-                    )
+                TryLog(
+                    entry.JobId,
+                    "Warn",
+                    $"auto-paused after {entry.ConsecutiveFailures} consecutive failures"
                 );
             }
         }
     }
 
-    private Task? _loopTask;
+    private volatile Task? _loopTask;
 
     /// <summary>TEST-ONLY bomb arm: the next FlushCore throws before doing any
     /// work. Verifies the loop's catch-all (review R4-1) — a transient flush
@@ -584,6 +609,21 @@ public sealed class Scheduler
     /// before doing any work. Verifies per-entry containment — one failing entry
     /// must not abort the flush for every other due job.</summary>
     internal Guid? BombAdvanceForJobId;
+
+    /// <summary>TEST ARM: the next next-fire computation for the given job throws
+    /// — exactly what a pattern that parses but never matches does. Used by
+    /// Register/Reschedule/Resume to verify that a failed computation leaves the
+    /// already-scheduled entry untouched (review finding 3).</summary>
+    internal Guid? BombNextFireForJobId;
+
+    private void ThrowIfNextFireBombed(Guid jobId)
+    {
+        if (BombNextFireForJobId == jobId)
+        {
+            BombNextFireForJobId = null;
+            throw new InvalidOperationException("test bomb inside next-fire computation");
+        }
+    }
 
     private void ThrowIfAdvanceBombed(JobEntry entry)
     {
@@ -606,7 +646,9 @@ public sealed class Scheduler
     private DateTimeOffset NextFireTracked(CronPattern cron, DateTimeOffset after, TimeZoneInfo tz)
     {
         var next = cron.NextFireCore(after, tz, out var steps);
-        CronSearchSteps += steps;
+        // Register computes next-fire outside the gate (the search is the
+        // expensive part), so this counter is shared with the loop thread.
+        Interlocked.Add(ref CronSearchSteps, steps);
         return next;
     }
 
@@ -642,20 +684,44 @@ public sealed class Scheduler
                     // as Critical and the loop LIVES — the next tick retries.
                     // A dead tick loop is the worst failure mode of a scheduler
                     // (silent stoppage); never let an inner exception kill it.
-                    _log?.Invoke(
-                        new ScheduleLogEntry(
-                            _clock.UtcNow,
-                            Guid.Empty,
-                            "Critical",
-                            $"flush failed: {ex.Message}"
-                        )
-                    );
+                    // Reporting is BEST-EFFORT (TryLog): this handler used to be
+                    // the one place where a throwing host log callback (or a
+                    // failing clock read) escaped and killed the loop for good
+                    // (review finding 1).
+                    TryLog(Guid.Empty, "Critical", $"flush failed: {ex.Message}");
                 }
             }
         }
         catch (OperationCanceledException)
         {
             // normal stop
+        }
+        catch (Exception ex)
+        {
+            // Last resort: anything outside the per-tick containment (e.g. an
+            // invalid tick interval) ends the loop — report it rather than let
+            // the task fault unobserved.
+            TryLog(Guid.Empty, "Critical", $"tick loop stopped: {ex.Message}");
+        }
+    }
+
+    /// <summary>Best-effort log delivery. The host callback (and the clock read
+    /// that stamps the entry) may throw; that must never escape into the code
+    /// path that is trying to REPORT a failure, or a contained error turns into
+    /// a dead tick loop (review finding 1). Nothing is left to report a
+    /// log-delivery failure to, so it is swallowed.</summary>
+    private void TryLog(Guid jobId, string level, string message)
+    {
+        try
+        {
+            var log = _log;
+            if (log is null)
+                return;
+            log(new ScheduleLogEntry(_clock.UtcNow, jobId, level, message));
+        }
+        catch
+        {
+            // best-effort: log delivery must never break scheduler control flow
         }
     }
 

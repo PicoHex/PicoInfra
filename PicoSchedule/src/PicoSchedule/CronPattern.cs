@@ -73,9 +73,18 @@ public sealed class CronPattern
         public bool Restricted => LastDay || NearestDay is not null || Bits.Count(true) < 31;
     }
 
-    private readonly record struct DayOfWeekSpec(bool[] Bits, (int Dow, int Nth)? Nth, int? LastDow)
+    private readonly record struct DayOfWeekSpec(
+        bool[] Bits,
+        (int Dow, int Nth)? Nth,
+        int? LastDow,
+        bool Wildcard = false
+    )
     {
-        public bool Restricted => Nth is not null || LastDow is not null || Bits.Count(true) < 8;
+        // Only '*'/'?' is unrestricted. Counting set bits no longer identifies a
+        // wildcard: bit 7 folds onto bit 0 (NormalizeSunday), so '*' and a '0-6'
+        // list both end up with seven set bits — and '0-6' is still a RESTRICTION
+        // (dom OR dow), which is what the pre-fold `< 8` count meant (finding 2).
+        public bool Restricted => Nth is not null || LastDow is not null || !Wildcard;
     }
 
     private CronPattern(bool[][] fields, bool hasSeconds, DayOfMonthSpec dom, DayOfWeekSpec dow)
@@ -357,7 +366,26 @@ public sealed class CronPattern
             bits[dow] = true;
             return new DayOfWeekSpec(bits, Nth: null, LastDow: dow);
         }
-        return new DayOfWeekSpec(ParseBits(raw, 0, 7, aliases), Nth: null, LastDow: null);
+        return new DayOfWeekSpec(
+            NormalizeSunday(ParseBits(raw, 0, 7, aliases)),
+            Nth: null,
+            LastDow: null,
+            Wildcard: raw is "*" or "?"
+        );
+    }
+
+    /// <summary>Folds Vixie's second Sunday spelling (7) onto 0. <see cref="DowHits"/>
+    /// indexes the bit-set by <c>(int)DayOfWeek</c> = 0..6, so a set bit 7 could
+    /// never match: '0 5 * * 7' parsed and then threw out of NextFire's 400-year
+    /// search, and '5-7' silently dropped Sunday (review finding 2).</summary>
+    private static bool[] NormalizeSunday(bool[] bits)
+    {
+        if (bits.Length > 7 && bits[7])
+        {
+            bits[7] = false;
+            bits[0] = true;
+        }
+        return bits;
     }
 
     private static bool[] ParseBits(
