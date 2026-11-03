@@ -440,6 +440,15 @@ container.AddPicoLog(o =>
 
 All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 
+`picolog.writes.rejected_after_shutdown` is the one counter a sink in *another* package has to
+record from outside this assembly, so `PicoLogMetrics.RecordRejectedAfterShutdown()` is
+**public**: call it once per write you refuse because your sink is already closed (`SeqSink` and
+`FileSink` both do). Every other recorder on `PicoLogMetrics` is `internal`, and recording is a
+stateless `Add(1)` on the shared instrument, so the method carries no behaviour of its own. The
+repository has **no public-API baseline** — no `PublicAPI*.txt` anywhere and no ApiCompat in
+`Directory.Build.props` — so a widening like this is recorded here and in the commit that makes
+it, not by a build that fails on the diff.
+
 ## Packages
 
 | Package | TFM | Description |
