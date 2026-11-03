@@ -63,12 +63,20 @@ public sealed class LogEntryPoolTests
         for (var i = 0; i < overflow; i++)
             LogEntryPool.Return(entries[i]);
 
-        // Assert: pool should not exceed MaxPoolSize after dropping excess
-        await Assert.That(LogEntryPool.Count).IsLessThanOrEqualTo(256);
+        // Assert: the pool keeps EXACTLY MaxPoolSize (256) and drops only the excess.
+        // `Count <= 256` was satisfied by any bound at all: bounding at 100, at 1, or dropping
+        // every entry left this test green, so the constant the name quotes was never pinned
+        // (test-validity audit row 12).
+        await Assert.That(LogEntryPool.Count).IsEqualTo(256);
 
-        // Assert: pool should still return valid entries (not corrupted)
+        // Assert: the entries that survived are the ones handed back — the pool bounds its queue,
+        // it does not throw the batch away.
         var pooled = LogEntryPool.Rent();
         await Assert.That(pooled).IsNotNull();
+        await Assert
+            .That(entries.Any(entry => ReferenceEquals(entry, pooled)))
+            .IsTrue()
+            .Because("Rent hands back a returned entry, not a fresh one");
 
         // Return it for cleanup
         LogEntryPool.Return(pooled);
