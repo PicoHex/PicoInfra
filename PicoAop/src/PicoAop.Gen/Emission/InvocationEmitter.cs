@@ -17,6 +17,17 @@ internal static class InvocationEmitter
         $"Invocation_{safeSvcName}_{method.Name}{SignatureSuffix(method)}";
 
     /// <summary>
+    /// A type as it is written into emitted source. <c>dynamic</c> is spelled
+    /// <c>object</c>: the two are one type, and the one place the spelling is
+    /// forbidden is exactly where a result type is written — a struct cannot
+    /// implement <c>IInvocation&lt;dynamic&gt;</c> (CS1966, "cannot implement a
+    /// dynamic interface"), while <c>IInvocation&lt;object&gt;</c> is the same
+    /// interface and every conversion the invocation needs still applies.
+    /// </summary>
+    public static string EmittedType(ITypeSymbol type) =>
+        type.TypeKind == TypeKind.Dynamic ? "object" : type.ToDisplayString(Fq);
+
+    /// <summary>
     /// Parameter type names as a name fragment. Type arguments are deliberately
     /// dropped here (<c>List&lt;int&gt;</c> and <c>List&lt;string&gt;</c> both
     /// become <c>_List</c>); overloads that would collide are detected by

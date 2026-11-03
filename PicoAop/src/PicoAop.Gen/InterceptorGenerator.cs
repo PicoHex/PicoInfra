@@ -230,10 +230,8 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         var resultTypeName = hasReturn
             ? (
                 retNamed?.TypeArguments.Length > 0
-                    ? retNamed
-                        .TypeArguments[0]
-                        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                    : retType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+                    ? InvocationEmitter.EmittedType(retNamed.TypeArguments[0])
+                    : InvocationEmitter.EmittedType(retType)
             )
             : "object";
 

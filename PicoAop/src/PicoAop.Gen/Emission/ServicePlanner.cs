@@ -857,43 +857,177 @@ internal static class ServicePlanner
         );
 
     /// <summary>
-    /// A type as it takes part in a signature slot: a reference to one of the
-    /// member's own type parameters is rendered by <em>position</em>
-    /// (<c>!0</c>, <c>!1</c>), because position is what C# keys a signature on.
-    /// Two base interfaces that declare the same member with different type
-    /// parameter names — <c>M&lt;T&gt;(T)</c> and <c>M&lt;U&gt;(U)</c> — are one
-    /// member that one implementation satisfies; printing the names split them
-    /// into two proxy members (CS0111 + CS0121 in the generated file, zero
-    /// diagnostics).
+    /// A type as it takes part in a signature slot, rendered from the
+    /// <em>symbols</em> the compiler compares rather than from the text the
+    /// declarations happened to use.
     /// <para>
-    /// The rendering walks <see cref="ISymbol.ToDisplayParts"/> and substitutes
-    /// the parts that *are* one of the method's own type parameters, so a name
-    /// that also happens to be a type in scope cannot be mistaken for one. The
-    /// positional form is a key only: nothing emitted into the generated file is
-    /// built from this string (the emitters print the symbols' own names).
+    /// A reference to one of the member's own type parameters is rendered by
+    /// <em>position</em> (<c>!0</c>, <c>!1</c>), because position is what C#
+    /// keys a signature on. Two base interfaces that declare the same member with
+    /// different type parameter names — <c>M&lt;T&gt;(T)</c> and
+    /// <c>M&lt;U&gt;(U)</c> — are one member that one implementation satisfies;
+    /// printing the names split them into two proxy members (CS0111 + CS0121 in
+    /// the generated file, zero diagnostics).
+    /// </para>
+    /// <para>
+    /// Everything else is rendered by identity, so two spellings of one type
+    /// cannot key differently (review-2026-11-02/rev-aop-4.md, defect 1):
+    /// <c>dynamic</c> renders as <c>object</c> — one type to the compiler, so
+    /// <c>dynamic M()</c> and <c>object M()</c> are one member — and
+    /// <c>nint</c>/<c>nuint</c> render as <c>System.IntPtr</c>/<c>System.UIntPtr</c>,
+    /// which they also are. Named types render fully qualified with their type
+    /// arguments rendered recursively, so <c>List&lt;dynamic&gt;</c> and
+    /// <c>List&lt;object&gt;</c> meet too.
+    /// </para>
+    /// <para>
+    /// Two things are deliberately <em>not</em> normalised. Tuple element names
+    /// stay in the key: the compiler's signature identity ignores them, but
+    /// implicit interface implementation does not — an implementation whose tuple
+    /// element names differ from the interface member's is CS8141, so merging
+    /// such a pair would only move a compile error into a file the consumer
+    /// cannot edit. Nullable annotations never appear in it (they are not part of
+    /// the signature either: <c>string</c> and <c>string?</c> are one slot).
+    /// </para>
+    /// <para>
+    /// The positional form is a key only: nothing emitted into the generated file
+    /// is built from this string (the emitters print the symbols' own names).
     /// </para>
     /// </summary>
     private static string PositionalType(
         ITypeSymbol type,
         ImmutableArray<ITypeParameterSymbol> typeParameters = default
+    ) => RenderType(new StringBuilder(), type, typeParameters).ToString();
+
+    private static StringBuilder RenderType(
+        StringBuilder sb,
+        ITypeSymbol type,
+        ImmutableArray<ITypeParameterSymbol> typeParameters
+    )
+    {
+        if (type is ITypeParameterSymbol typeParameter)
+        {
+            var index = OwnTypeParameterIndex(typeParameter, typeParameters);
+
+            // A type parameter the member does not own (the enclosing type's, or
+            // another member's) is the same symbol on both sides, so its name is
+            // stable; only the member's own ones are positional.
+            return index < 0 ? sb.Append(typeParameter.Name) : sb.Append('!').Append(index);
+        }
+
+        switch (type.TypeKind)
+        {
+            case TypeKind.Dynamic:
+                // `dynamic` is `object`: one member implements both (CS0111 is
+                // the proof — the compiler refuses to overload them).
+                return sb.Append("global::System.Object");
+            case TypeKind.Array when type is IArrayTypeSymbol array:
+                return RenderType(sb, array.ElementType, typeParameters)
+                    .Append('[')
+                    .Append(',', array.Rank - 1)
+                    .Append(']');
+            case TypeKind.Pointer when type is IPointerTypeSymbol pointer:
+                return RenderType(sb, pointer.PointedAtType, typeParameters).Append('*');
+            case TypeKind.Class
+            or TypeKind.Struct
+            or TypeKind.Interface
+            or TypeKind.Enum
+            or TypeKind.Delegate when type is INamedTypeSymbol named:
+                return RenderNamedType(sb, named, typeParameters);
+        }
+
+        // Function pointers, error types and any type kind added later: keep the
+        // old rendering, which substitutes the member's own type parameters by
+        // symbol.
+        return sb.Append(SubstitutedDisplayText(type, typeParameters));
+    }
+
+    private static StringBuilder RenderNamedType(
+        StringBuilder sb,
+        INamedTypeSymbol named,
+        ImmutableArray<ITypeParameterSymbol> typeParameters
+    )
+    {
+        // Tuple element names are part of what an implementation has to match
+        // (CS8141), so they are part of the key.
+        if (named.IsTupleType)
+        {
+            sb.Append('(');
+            for (var i = 0; i < named.TupleElements.Length; i++)
+            {
+                if (i > 0)
+                    sb.Append(',');
+                var element = named.TupleElements[i];
+                sb.Append(element.Name).Append(':');
+                RenderType(sb, element.Type, typeParameters);
+            }
+            return sb.Append(')');
+        }
+
+        AppendNamedTypeName(sb, named);
+
+        if (named.Arity == 0 || named.TypeArguments.Length == 0)
+            return sb;
+
+        sb.Append('<');
+        for (var i = 0; i < named.TypeArguments.Length; i++)
+        {
+            if (i > 0)
+                sb.Append(',');
+            RenderType(sb, named.TypeArguments[i], typeParameters);
+        }
+        return sb.Append('>');
+    }
+
+    private static StringBuilder AppendNamedTypeName(StringBuilder sb, INamedTypeSymbol named)
+    {
+        if (named.ContainingType is { } containing)
+            return AppendNamedTypeName(sb, containing).Append('.').Append(named.Name);
+
+        if (named.ContainingNamespace is { IsGlobalNamespace: false } @namespace)
+            sb.Append("global::").Append(@namespace.ToDisplayString()).Append('.');
+
+        // A native integer is the same symbol as IntPtr/UIntPtr, and carries the
+        // name IntPtr has: `nint` and `System.IntPtr` end up identical here.
+        return sb.Append(named.Name);
+    }
+
+    private static int OwnTypeParameterIndex(
+        ITypeParameterSymbol typeParameter,
+        ImmutableArray<ITypeParameterSymbol> typeParameters
     )
     {
         // `default(ImmutableArray<T>)` is the *uninitialized* array, and reading
         // .Length off it throws; properties and events pass no type parameters.
+        if (typeParameters.IsDefaultOrEmpty)
+            return -1;
+
+        for (var i = 0; i < typeParameters.Length; i++)
+            if (SymbolEqualityComparer.Default.Equals(typeParameters[i], typeParameter))
+                return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// The display text of a type with the member's own type parameters replaced
+    /// by their position, for the types <see cref="RenderType"/> does not walk.
+    /// The substitution goes through <see cref="ISymbol.ToDisplayParts"/> and
+    /// compares symbols, so a name that also happens to be a type in scope cannot
+    /// be mistaken for a type parameter.
+    /// </summary>
+    private static string SubstitutedDisplayText(
+        ITypeSymbol type,
+        ImmutableArray<ITypeParameterSymbol> typeParameters
+    )
+    {
         if (typeParameters.IsDefaultOrEmpty)
             return type.ToDisplayString(Fq);
 
         var sb = new StringBuilder();
         foreach (var part in type.ToDisplayParts(Fq))
         {
-            var index = -1;
-            if (part.Symbol is ITypeParameterSymbol typeParameter)
-                for (var i = 0; i < typeParameters.Length; i++)
-                    if (SymbolEqualityComparer.Default.Equals(typeParameters[i], typeParameter))
-                    {
-                        index = i;
-                        break;
-                    }
+            var index = part.Symbol is ITypeParameterSymbol typeParameter
+                ? OwnTypeParameterIndex(typeParameter, typeParameters)
+                : -1;
 
             if (index < 0)
                 sb.Append(part.ToString());
