@@ -64,9 +64,34 @@ public class JsonLogSinkTests
             await sink.WriteAsync(entry);
             await sink.DisposeAsync();
 
-            var content = await File.ReadAllTextAsync(file);
-            await Assert.That(content).Contains("Something went wrong");
-            await Assert.That(content).Contains("InvalidOperationException");
+            // Contains() is not the contract here either: the exception branch used to be the
+            // one path no parse test reached, so emitting the triple as raw text with a missing
+            // comma (`"ExceptionType":"…""Exception":"…"`) left this test green — both
+            // substrings present, the line unparseable (review-2026-11-02 test-validity
+            // finding 5). The line is NDJSON, so it has to PARSE, with the exception members
+            // carrying the exception's data.
+            var lines = await File.ReadAllLinesAsync(file);
+            await Assert.That(lines.Length).IsEqualTo(1).Because("one entry, one NDJSON record");
+
+            var doc = PicoDocument.Parse(System.Text.Encoding.UTF8.GetBytes(lines[0]));
+            var root = doc.RootElement;
+
+            await Assert.That(root.TryGetProperty("ExceptionType", out var exceptionType)).IsTrue();
+            await Assert
+                .That(exceptionType.GetString())
+                .IsEqualTo("System.InvalidOperationException")
+                .Because("the record must carry the exception's full type name");
+            await Assert.That(root.TryGetProperty("Exception", out var exception)).IsTrue();
+            await Assert
+                .That(exception.GetString())
+                .IsEqualTo("Something went wrong")
+                .Because("the record must carry the exception's message");
+
+            // ...and the rest of the record is still a well-formed entry.
+            await Assert.That(root.TryGetProperty("Message", out var message)).IsTrue();
+            await Assert.That(message.GetString()).IsEqualTo("Error occurred");
+            await Assert.That(root.TryGetProperty("Level", out var level)).IsTrue();
+            await Assert.That(level.GetString()).IsEqualTo("Error");
         }
         finally
         {
