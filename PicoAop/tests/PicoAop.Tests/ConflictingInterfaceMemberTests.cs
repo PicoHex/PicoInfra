@@ -384,6 +384,91 @@ public class ConflictingInterfaceMemberTests : GeneratorTestBase
         await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// Constraints do not participate in the C# signature, so two interface
+    /// members that differ only by their type-parameter constraints still
+    /// occupy one name slot — but they are different implementations, and the
+    /// proxy can satisfy only one of them implicitly. The plan used to key a
+    /// member on name + arity + parameter types + return type, so the pair
+    /// looked like one member: the second was dropped, no PICO113 was reported,
+    /// and the single emitted <c>where T : class</c> did not match
+    /// <c>IB.M&lt;T&gt;() where T : struct</c> (CS0425, zero diagnostics).
+    /// review-2026-11-02/rev-aop-3c.md, D3.
+    /// </summary>
+    [Test]
+    public async Task SameNamedGenericMethodsDifferingOnlyByConstraints_ReportPico113AndCompile()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    void M<T>()
+                        where T : class;
+                }
+
+                public interface IB
+                {
+                    void M<T>()
+                        where T : struct;
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    void IA.M<T>() { }
+                    void IB.M<T>() { }
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine("----- warnings -----");
+        Console.WriteLine(result.WarningText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // The pair must be reported as one generated-name collision instead of
+        // one member being silently dropped.
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO113")).IsEqualTo(1);
+        await Assert.That(result.DiagnosticText.Contains("IA.M<T>()")).IsTrue();
+        await Assert.That(result.DiagnosticText.Contains("IB.M<T>()")).IsTrue();
+
+        // Both members are emitted: one implicit with its own constraint, one
+        // explicit (constraints inherited) — so neither interface member is
+        // implemented with the wrong constraint.
+        var implicitLines = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("public void M<T>()", StringComparison.Ordinal))
+            .ToList();
+        var explicitLines = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("global::IB.M<T>()", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"IMPLICIT: {string.Join(" || ", implicitLines)}");
+        Console.WriteLine($"EXPLICIT: {string.Join(" || ", explicitLines)}");
+        await Assert.That(implicitLines.Count).IsEqualTo(1);
+        await Assert
+            .That(implicitLines[0].Contains("where T : class", StringComparison.Ordinal))
+            .IsTrue();
+        await Assert.That(explicitLines.Count).IsEqualTo(1);
+        await Assert.That(explicitLines[0].Contains("where", StringComparison.Ordinal)).IsFalse();
+
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+    }
+
     private static List<string> ReadCalls(Assembly assembly) =>
         (List<string>)assembly.GetType("CountingInterceptor")!.GetField("Calls")!.GetValue(null)!;
 }

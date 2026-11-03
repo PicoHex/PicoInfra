@@ -630,17 +630,65 @@ internal static class ServicePlanner
     /// accessors for a property. Without the return type, <c>IA { int V {get;} }</c>
     /// and <c>IB { string V {get;} }</c> look like one member and the second is
     /// silently dropped from the proxy (CS0738/CS0535 in generated code).
+    /// <para>
+    /// A generic method keys on its type-parameter constraints too. They are not
+    /// part of the C# signature, so two members can occupy one name slot while
+    /// constraining <c>T</c> differently — but they are different
+    /// implementations, and one <c>where T : class</c> cannot satisfy
+    /// <c>M&lt;T&gt;() where T : struct</c> (CS0425). Keying on them turns such a
+    /// pair into a reported PICO113 collision instead of a dropped member.
+    /// </para>
     /// </summary>
     private static string SignatureKey(ISymbol member) =>
         member switch
         {
             IMethodSymbol method =>
-                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}:{method.ReturnType.ToDisplayString(Fq)}",
+                $"M:{method.Name}:{method.TypeParameters.Length}:{ParameterTypes(method.Parameters)}:{method.ReturnType.ToDisplayString(Fq)}:{ConstraintKey(method)}",
             IPropertySymbol property =>
                 $"P:{property.Name}:{ParameterTypes(property.Parameters)}:{property.Type.ToDisplayString(Fq)}:{(property.GetMethod is null ? string.Empty : "g")}{(property.SetMethod is null ? string.Empty : "s")}",
             IEventSymbol @event => $"E:{@event.Name}:{@event.Type.ToDisplayString(Fq)}",
             _ => $"{member.Kind}:{member.Name}",
         };
+
+    /// <summary>
+    /// The constraint set of one generic method as a comparable string
+    /// (<c>class|global::System.IComparable&lt;T&gt;+new</c>); empty for a
+    /// non-generic method.
+    /// </summary>
+    private static string ConstraintKey(IMethodSymbol method) =>
+        method.TypeParameters.Length == 0
+            ? string.Empty
+            : string.Join(
+                "|",
+                method.TypeParameters.Select(typeParameter =>
+                    string.Join(
+                        "+",
+                        new[]
+                        {
+                            TypeParameterConstraintKind(typeParameter),
+                            string.Join(
+                                ",",
+                                typeParameter.ConstraintTypes.Select(type =>
+                                    type.ToDisplayString(Fq)
+                                )
+                            ),
+                            typeParameter.HasConstructorConstraint ? "new" : string.Empty,
+                        }
+                    )
+                )
+            );
+
+    /// <summary>The primary constraint keyword of one type parameter, if any.</summary>
+    private static string TypeParameterConstraintKind(ITypeParameterSymbol typeParameter) =>
+        typeParameter.HasUnmanagedTypeConstraint ? "unmanaged"
+        : typeParameter.HasValueTypeConstraint ? "struct"
+        : typeParameter.HasReferenceTypeConstraint
+            ? typeParameter.ReferenceTypeConstraintNullableAnnotation
+                == NullableAnnotation.Annotated
+                    ? "class?"
+                : "class"
+        : typeParameter.HasNotNullConstraint ? "notnull"
+        : string.Empty;
 
     /// <summary>
     /// What the compiler considers one name: the member name plus, for methods
