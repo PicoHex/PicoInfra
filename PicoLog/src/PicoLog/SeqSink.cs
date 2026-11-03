@@ -336,13 +336,131 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
         return sb.ToString();
     }
 
+    private const string HexDigits = "0123456789abcdef";
+
+    /// <summary>
+    /// Escapes <paramref name="value"/> for embedding inside a JSON string literal.
+    /// </summary>
+    /// <remarks>
+    /// Hand-rolled on purpose: PicoLog deliberately references only PicoLog.Abs, so it cannot
+    /// call the PicoSerDe/PicoJetson writer. Adopting that writer is a dependency decision for
+    /// the maintainer, not a cleanup.
+    /// <para>
+    /// The table is complete for JSON (RFC 8259 §7): <c>"</c> → <c>\"</c>, <c>\</c> → <c>\\</c>,
+    /// <c>\b \f \n \r \t</c> as the two-character short forms, and <b>every other</b> code point
+    /// below U+0020 → <c>\u00XX</c> (lowercase hex). The five-call
+    /// <see cref="string.Replace(string, string)"/> chain this replaces let U+0000, U+0001,
+    /// U+0008, U+000B, U+000C, U+001F … through raw, which is invalid JSON inside a string
+    /// literal — the server rejects the entire batch instead of logging it.
+    /// </para>
+    /// <para>
+    /// Unpaired surrogates cannot be represented in UTF-8 at all, so they are emitted as the
+    /// explicit escape <c>\ufffd</c> (U+FFFD REPLACEMENT CHARACTER): the same character the
+    /// transport's UTF-8 encoder used to substitute silently, now chosen deliberately. Well-formed
+    /// surrogate pairs (emoji) pass through untouched, and U+2028/U+2029 stay raw — both are
+    /// legal unescaped in JSON.
+    /// </para>
+    /// <para>
+    /// <b>Cost.</b> The common case (nothing to escape) is one <c>O(n)</c> scan that returns the
+    /// same string instance — zero allocations, versus five full scans for the Replace chain.
+    /// When escaping is needed: one scan, one <see cref="StringBuilder"/> and one result string,
+    /// with clean runs bulk-copied by <c>Append(string, int, int)</c>; the Replace chain paid up
+    /// to five full-length intermediate copies instead. Escaped output grows by at most 5 chars
+    /// per escaped character (<c>\u00XX</c>).
+    /// </para>
+    /// </remarks>
     private static string EscapeJson(string value)
     {
-        return value
-            .Replace("\\", "\\\\")
-            .Replace("\"", "\\\"")
-            .Replace("\n", "\\n")
-            .Replace("\r", "\\r")
-            .Replace("\t", "\\t");
+        if (!NeedsEscaping(value))
+            return value;
+
+        // Worst case is 6 chars per input char, but escaped payloads are rare and usually
+        // short; a modest head start beats over-allocating every log message.
+        var sb = new StringBuilder(value.Length + 8);
+        var runStart = 0;
+        var i = 0;
+
+        while (i < value.Length)
+        {
+            if (!NeedsEscape(value, i))
+            {
+                i++;
+                continue;
+            }
+
+            if (i > runStart)
+                sb.Append(value, runStart, i - runStart);
+
+            switch (value[i])
+            {
+                case '"':
+                    sb.Append("\\\"");
+                    break;
+                case '\\':
+                    sb.Append("\\\\");
+                    break;
+                case '\b':
+                    sb.Append("\\b");
+                    break;
+                case '\f':
+                    sb.Append("\\f");
+                    break;
+                case '\n':
+                    sb.Append("\\n");
+                    break;
+                case '\r':
+                    sb.Append("\\r");
+                    break;
+                case '\t':
+                    sb.Append("\\t");
+                    break;
+                default:
+                    if (value[i] < 0x20)
+                        sb.Append("\\u00")
+                            .Append(HexDigits[value[i] >> 4])
+                            .Append(HexDigits[value[i] & 0xF]);
+                    else
+                        sb.Append("\\ufffd"); // unpaired surrogate: not representable in UTF-8
+                    break;
+            }
+
+            runStart = ++i;
+        }
+
+        if (runStart < value.Length)
+            sb.Append(value, runStart, value.Length - runStart);
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// True when <paramref name="value"/> holds at least one character <see cref="EscapeJson"/>
+    /// has to rewrite — the fast-path gate.
+    /// </summary>
+    private static bool NeedsEscaping(string value)
+    {
+        for (var i = 0; i < value.Length; i++)
+        {
+            if (NeedsEscape(value, i))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the char at <paramref name="index"/> must be rewritten: C0 control, quote,
+    /// backslash, or a surrogate that is not half of a well-formed pair. A low surrogate is fine
+    /// when the preceding char is a high surrogate — the pair is copied through as-is.
+    /// </summary>
+    private static bool NeedsEscape(string value, int index)
+    {
+        var c = value[index];
+        if (c < 0x20 || c == '"' || c == '\\')
+            return true;
+        if (char.IsHighSurrogate(c))
+            return index + 1 >= value.Length || !char.IsLowSurrogate(value[index + 1]);
+        if (char.IsLowSurrogate(c))
+            return index == 0 || !char.IsHighSurrogate(value[index - 1]);
+        return false;
     }
 }
