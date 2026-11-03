@@ -170,7 +170,9 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             foreach (var member in plan.Members.Where(m => m.IsIntercepted))
             {
                 if (member.Method is not null)
-                    sb.AppendLine(EmitInvocationStruct(plan.SafeName, member, interceptorTypes));
+                    sb.AppendLine(
+                        EmitInvocationStruct(plan.Service, plan.SafeName, member, interceptorTypes)
+                    );
                 else if (member.Property is not null)
                     EmitPropertyStructs(sb, plan.SafeName, member, namedSvc, interceptorTypes);
             }
@@ -197,8 +199,17 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
     /// constraints (a type parameter is not in scope otherwise: CS0246), and
     /// carries its own static delegate chain, because those delegates mention
     /// the type parameters and therefore cannot live on the proxy class.
+    /// <para>
+    /// The struct is built around <paramref name="service"/>, never around
+    /// <c>method.ContainingType</c>: a member inherited from a base interface
+    /// would otherwise report that base interface through
+    /// <see cref="IInvocation.ServiceType"/> while the property structs of the
+    /// same proxy report the service, so an interceptor keyed on
+    /// <c>ServiceType</c> silently misses inherited members.
+    /// </para>
     /// </summary>
     private static string EmitInvocationStruct(
+        INamedTypeSymbol service,
         string safeSvcName,
         PlannedMember member,
         List<ITypeSymbol> interceptorTypes
@@ -206,7 +217,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
     {
         var method = member.Method!;
         var sb = new StringBuilder();
-        var svcFullName = method.ContainingType.ToDisplayString(Fq);
+        var svcFullName = service.ToDisplayString(Fq);
         var retType = method.ReturnType;
         var retNamed = retType as INamedTypeSymbol;
         var metaName = retNamed?.MetadataName;
