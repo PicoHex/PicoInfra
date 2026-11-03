@@ -5,7 +5,8 @@
 # Sibling repos (PicoActor, PicoNode, PicoAgent, ...) consume PicoInfra packages
 # via PackageReference, so local development would stall until indexing
 # completes. This script packs ALL packages into the local folder feed
-# (NuGet.config: local -> artifacts/nupkg) before tagging, so local restores
+# (Directory.Build.props: RestoreAdditionalProjectSources -> artifacts/nupkg,
+# added only when the folder exists) before tagging, so local restores
 # resolve the new version instantly. CI (release.yml) still publishes to
 # nuget.org as usual; once indexed, both sources serve the same bits.
 #
