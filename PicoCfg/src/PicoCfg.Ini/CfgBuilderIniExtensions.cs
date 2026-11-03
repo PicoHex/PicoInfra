@@ -16,7 +16,7 @@ public static class CfgBuilderIniExtensions
             return builder.AddSource(
                 builder.CreateFileWatchingSource(
                     path,
-                    ParseIniFileAsync,
+                    (stream, ct) => ParseIniFileAsync(path, stream, ct),
                     () => File.GetLastWriteTimeUtc(path)
                 )
             );
@@ -24,6 +24,7 @@ public static class CfgBuilderIniExtensions
     }
 
     private static Task<Dictionary<string, string>> ParseIniFileAsync(
+        string path,
         Stream stream,
         CancellationToken ct
     )
@@ -32,7 +33,7 @@ public static class CfgBuilderIniExtensions
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(IniFlattener.Flatten(buffer.ToArray()));
+        return Task.FromResult(IniFlattener.Flatten(buffer.ToArray(), path));
     }
 }
 

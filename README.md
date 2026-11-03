@@ -186,6 +186,7 @@ var settings = CfgBind.Bind<AppSettings>(cfg, "App");
   - Command-line args (`--key=value`, `--key value`, `/key`)
   - Key-per-file directory
   - JSON, YAML, INI, TOML (separate packages: `PicoCfg.Json`, `PicoCfg.Yaml`, etc.) — file sources (`AddJsonFile`, `AddYamlFile`, `AddIniFile`, `AddTomlFile`) are file-watching with debounced auto-reload; string sources (`AddJson(string)`, …) are static
+  - **Ambiguous text keys throw** — YAML and TOML flatten a document into one `':'`-separated key space, so a name carrying its own `':'` that lands on an existing key is a `CfgKeyCollisionException` at `BuildAsync`, naming the key and both positions instead of silently overwriting; INI rejects `':'` inside a section name or key outright (it nests with `.` already), so `[A.C]` and `[A:C]` can no longer merge into one section. Duplicate keys inside one mapping stay last-wins, and `':'` inside a value is untouched
 - **Binding (`PicoCfg.Gen`):**
   - Generates `Bind<T>` / `TryBind<T>` / `BindInto<T>` delegates for any type used with `CfgBind.Bind<T>()`
   - **Topological sort** of nested types to ensure inner types generate before their parents

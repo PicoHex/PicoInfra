@@ -27,7 +27,7 @@ public static class CfgBuilderTomlExtensions
             return builder.AddSource(
                 builder.CreateFileWatchingSource(
                     path,
-                    (stream, ct) => ParseTomlFileAsync(stream, ct, flattenArrays),
+                    (stream, ct) => ParseTomlFileAsync(path, stream, ct, flattenArrays),
                     () => File.GetLastWriteTimeUtc(path)
                 )
             );
@@ -35,6 +35,7 @@ public static class CfgBuilderTomlExtensions
     }
 
     private static Task<Dictionary<string, string>> ParseTomlFileAsync(
+        string path,
         Stream stream,
         CancellationToken ct,
         bool flattenArrays = false
@@ -44,7 +45,7 @@ public static class CfgBuilderTomlExtensions
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(TomlFlattener.Flatten(buffer.ToArray(), flattenArrays));
+        return Task.FromResult(TomlFlattener.Flatten(buffer.ToArray(), flattenArrays, path));
     }
 }
 

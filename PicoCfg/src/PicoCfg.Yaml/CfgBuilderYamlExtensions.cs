@@ -27,7 +27,7 @@ public static class CfgBuilderYamlExtensions
             return builder.AddSource(
                 builder.CreateFileWatchingSource(
                     path,
-                    (stream, ct) => ParseYamlFileAsync(stream, ct, flattenArrays),
+                    (stream, ct) => ParseYamlFileAsync(path, stream, ct, flattenArrays),
                     () => File.GetLastWriteTimeUtc(path)
                 )
             );
@@ -35,6 +35,7 @@ public static class CfgBuilderYamlExtensions
     }
 
     private static Task<Dictionary<string, string>> ParseYamlFileAsync(
+        string path,
         Stream stream,
         CancellationToken ct,
         bool flattenArrays = false
@@ -44,7 +45,7 @@ public static class CfgBuilderYamlExtensions
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(YamlFlattener.Flatten(buffer.ToArray(), flattenArrays));
+        return Task.FromResult(YamlFlattener.Flatten(buffer.ToArray(), flattenArrays, path));
     }
 }
 

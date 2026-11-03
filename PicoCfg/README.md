@@ -42,6 +42,41 @@ Sources define **how** config is produced. Providers own snapshot lifecycle. The
 
 Sources are evaluated in insertion order, with later sources overriding earlier ones on key conflict.
 
+## Text Formats & Key Collisions
+
+The text backends flatten a document into one `':'`-separated key space, so a name that itself
+contains `':'` addresses the same key as real nesting, and the later value silently won:
+
+| Format | Real nesting | A literal `':'` in a name | Key both address |
+|---|---|---|---|
+| YAML | `a:\n  b: 1` | `"a:b": 2` | `a:b` |
+| TOML | `on = false` under `[db.ssl]` | `"ssl:on" = true` under `[db]` | `db:ssl:on` |
+| INI | `k=1` under `[A.C]` (`.` reads as nesting) | `k=1` under `[A:C]`, or `B:C=1` under `[A]` | `A:C` / `A:B:C` |
+
+YAML and TOML keep the name as written and reject the result: one document may not produce the same
+key from two different positions, and that is a `CfgKeyCollisionException` — thrown from `BuildAsync`
+(or when a watched file reopens), never from a later lookup — which carries the key, the format and
+both positions (line + raw path segments), so the two places can be found and renamed.
+
+INI is stricter, because it already nests with `'.'`: `':'` is the separator and not a legal character
+inside a section name or a key, so `[A:C]` — and `B:C=1`, and `[A.C]` together with `[A:C]` — is
+rejected at its own position (naming the `[A.C]` that already produces `A:C` when the document has
+one). That keeps the INI key space injective, one spelling per key, instead of two sections merging
+into one. `[Parent.Child]` → `Parent:Child` is unchanged, so no existing document moves a key.
+
+The contract is **not** an escaping scheme: escaping would rename every existing key and break
+`CfgBind` path matching. The snapshot dictionary type and the `ICfg` shapes are unchanged.
+
+What is *not* a collision:
+
+- duplicate keys inside one mapping (`a: 1` then `a: 2`, `k=1` then `k=2` in one INI section or TOML
+  table) — last wins, unchanged;
+- a `':'` inside a **value** (`Url="http://host:80/path"`) — values are not path segments;
+- a repeated INI section header or TOML table header naming the same section — same mapping, last wins.
+
+`PicoCfg.Json` is not covered yet: it flattens the same way, so `{"a:b": 1}` and `{"a":{"b": 1}}`
+still land on one key there, with the later value winning.
+
 ## CfgBuilder
 
 ```csharp

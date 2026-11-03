@@ -24,6 +24,15 @@ namespace PicoCfg.Toml;
 /// one per element, with NO matching ArrayEnd — and a value array is a plain
 /// <c>ArrayStart</c>/<c>ArrayEnd</c> pair whose elements are bare value tokens.
 /// </para>
+/// <para>
+/// <b>Keys, and the one ambiguity TOML has</b>: a dotted table path is genuine nesting and stays —
+/// <c>[db.ssl]</c> is published as <c>db:ssl</c>, and <c>a.b = 1</c> and <c>[a] b = 1</c> are the
+/// same row, which is what TOML says they are. What may not happen is a ':' inside a key quietly
+/// landing on a nested table's key: <c>[db] "ssl:on" = true</c> and <c>[db.ssl] on = false</c> are
+/// both <c>db:ssl:on</c>, and that used to be a silent overwrite. It now throws
+/// <see cref="CfgKeyCollisionException"/> naming both positions. Duplicate keys inside one table
+/// (last wins) and a ':' inside a <i>value</i> (not a path segment) are unaffected.
+/// </para>
 /// </remarks>
 internal static class TomlFlattener
 {
@@ -34,19 +43,26 @@ internal static class TomlFlattener
     /// used by CfgBind. Defaults to <see langword="false"/> (arrays are skipped), the same contract
     /// <c>AddJson</c> has.
     /// </param>
+    /// <param name="document">
+    /// File name used in collision messages, or <see langword="null"/> for an in-memory document.
+    /// </param>
     public static Dictionary<string, string> Flatten(
         ReadOnlySpan<byte> toml,
-        bool flattenArrays = false
+        bool flattenArrays = false,
+        string? document = null
     )
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var map = new CfgFlatKeyMap("TOML", document);
         if (toml.IsEmpty)
-            return result;
+            return map.Values;
 
         var reader = new TomlReader(toml);
         var arrayTables = new Dictionary<string, int>(StringComparer.Ordinal);
         var arrays = new Stack<ArrayFrame>();
         var scope = ""; // prefix PropertyName tokens attach to ("" = document root)
+        // The same prefix as SPELLED: table paths keep their dots here, so "db.ssl" and a literal
+        // "db:ssl" are distinguishable when a collision has to be reported or detected.
+        var scopeOrigin = "";
         string? pendingKey = null;
         // The path the previous token published. An inline-array value arrives as a PropertyName
         // carrying the PREVIOUS key's value in ValueSpan (the reader keeps the old span for an
@@ -75,6 +91,7 @@ internal static class TomlFlattener
                         // s:0:b/s:0:c instead of z:b/z:c.
                         arrayTableScope = null;
                         scope = "";
+                        scopeOrigin = "";
                     }
                     if (reader.ValueSpan.IsEmpty)
                     {
@@ -90,8 +107,19 @@ internal static class TomlFlattener
                         break;
 
                     var prefix = scope.Length > 0 ? "" : Table(reader);
+                    var origin = CfgFlatKeyMap.Origin(
+                        scopeOrigin,
+                        scope.Length > 0 ? "" : TableSpelling(reader),
+                        key
+                    );
                     var path = Join(scope, prefix, key);
-                    result[path] = Encoding.UTF8.GetString(reader.ValueSpan);
+                    map.Set(
+                        toml,
+                        path,
+                        Encoding.UTF8.GetString(reader.ValueSpan),
+                        origin,
+                        reader.TokenStart
+                    );
                     written = path;
                     pendingKey = null;
                     break;
@@ -107,7 +135,9 @@ internal static class TomlFlattener
                     var table = Table(reader);
                     var index = arrayTables.TryGetValue(table, out var seen) ? seen : 0;
                     arrayTables[table] = index + 1;
-                    scope = Join("", table, index.ToString(CultureInfo.InvariantCulture));
+                    var element = index.ToString(CultureInfo.InvariantCulture);
+                    scope = Join("", table, element);
+                    scopeOrigin = CfgFlatKeyMap.Origin(TableSpelling(reader), element);
                     arrayTableScope = table;
                     pendingKey = null;
                     break;
@@ -124,17 +154,32 @@ internal static class TomlFlattener
                     var openScope = pendingKey is not null
                         ? Join(scope, scope.Length > 0 ? "" : Table(reader), pendingKey)
                         : publishedByPreviousToken ?? Join(scope, Table(reader), "");
+                    var openScopeOrigin =
+                        pendingKey is not null
+                            ? CfgFlatKeyMap.Origin(
+                                scopeOrigin,
+                                scope.Length > 0 ? "" : TableSpelling(reader),
+                                pendingKey
+                            )
+                        : publishedByPreviousToken is not null
+                            ? OriginOfPublished(map, publishedByPreviousToken, scopeOrigin)
+                        : CfgFlatKeyMap.Origin(scopeOrigin, TableSpelling(reader));
                     if (pendingKey is null && publishedByPreviousToken is not null)
-                        result.Remove(publishedByPreviousToken);
-                    arrays.Push(new ArrayFrame(scope));
+                        map.Remove(publishedByPreviousToken);
+                    arrays.Push(new ArrayFrame(scope, scopeOrigin));
                     scope = openScope;
+                    scopeOrigin = openScopeOrigin;
                     pendingKey = null;
                     break;
                 }
 
                 case TokenType.ArrayEnd:
                     if (arrays.Count > 0)
-                        scope = arrays.Pop().Scope;
+                    {
+                        var frame = arrays.Pop();
+                        scope = frame.Scope;
+                        scopeOrigin = frame.Origin;
+                    }
                     break;
 
                 case TokenType.String:
@@ -153,16 +198,29 @@ internal static class TomlFlattener
                     var frame = arrays.Pop();
                     var index = frame.NextIndex;
                     arrays.Push(frame with { NextIndex = index + 1 });
+                    var element = index.ToString(CultureInfo.InvariantCulture);
                     if (flattenArrays)
-                        result[Join(scope, null, index.ToString(CultureInfo.InvariantCulture))] =
-                            Encoding.UTF8.GetString(reader.ValueSpan);
+                        map.Set(
+                            toml,
+                            Join(scope, null, element),
+                            Encoding.UTF8.GetString(reader.ValueSpan),
+                            CfgFlatKeyMap.Origin(scopeOrigin, element),
+                            reader.TokenStart
+                        );
                     break;
                 }
             }
         }
 
-        return result;
+        return map.Values;
     }
+
+    /// <summary>
+    /// The origin of the entry the previous token published — the array that follows is named by
+    /// that entry, so it inherits its position instead of inventing one.
+    /// </summary>
+    private static string OriginOfPublished(CfgFlatKeyMap map, string published, string fallback) =>
+        map.TryGetOrigin(published, out var origin) ? origin : fallback;
 
     /// <summary>
     /// Distinguishes the <c>[[table]]</c> header from a value array inside a <c>[[table]]</c>
@@ -199,6 +257,10 @@ internal static class TomlFlattener
     private static string Table(TomlReader reader) =>
         reader.TablePath.IsEmpty ? "" : Encoding.UTF8.GetString(reader.TablePath).Replace('.', ':');
 
+    /// <summary>The table path as it is written in the document, dots and all.</summary>
+    private static string TableSpelling(TomlReader reader) =>
+        reader.TablePath.IsEmpty ? "" : Encoding.UTF8.GetString(reader.TablePath);
+
     private static string Join(string scope, string? table, string leaf)
     {
         var parts = new List<string>(3);
@@ -211,5 +273,5 @@ internal static class TomlFlattener
         return string.Join(':', parts);
     }
 
-    private readonly record struct ArrayFrame(string Scope, int NextIndex = 0);
+    private readonly record struct ArrayFrame(string Scope, string Origin, int NextIndex = 0);
 }

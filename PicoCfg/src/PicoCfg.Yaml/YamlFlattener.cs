@@ -25,6 +25,14 @@ namespace PicoCfg.Yaml;
 /// previous key on item tokens.
 /// </para>
 /// <para>
+/// <b>Keys, and the one ambiguity YAML has</b>: a key is the ':'-joined path, so a ':' inside a
+/// name cannot be told apart from real nesting — the block form of key a with a nested key b
+/// and a quoted "a:b" key are both <c>a:b</c>. That used to be a silent overwrite; it now
+/// throws <see cref="CfgKeyCollisionException"/> naming both positions. Duplicate keys inside
+/// one mapping (a: 1 then a: 2) are still last-wins and never throw. A ':' inside a
+/// <i>value</i> is not part of the path and is untouched.
+/// </para>
+/// <para>
 /// <b>Known reader gap, compensated nowhere</b>: YAML's first inline member of a sequence item
 /// (<c>- name: x</c>) is handed over as one raw string (<c>name: x</c>) and its continuation
 /// arrives as a separate nested object, so a sequence of mappings flattens as
@@ -42,14 +50,18 @@ internal static class YamlFlattener
     /// (<c>Servers:0</c>, <c>Items:0</c>). Defaults to <see langword="false"/> — sequences are
     /// skipped, which is the same contract <c>AddJson</c> has.
     /// </param>
+    /// <param name="document">
+    /// File name used in collision messages, or <see langword="null"/> for an in-memory document.
+    /// </param>
     public static Dictionary<string, string> Flatten(
         ReadOnlySpan<byte> yaml,
-        bool flattenArrays = false
+        bool flattenArrays = false,
+        string? document = null
     )
     {
-        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var map = new CfgFlatKeyMap("YAML", document);
         if (yaml.IsEmpty)
-            return result;
+            return map.Values;
 
         var reader = new YamlReader(yaml);
         // The implicit document root. Every container pushes a frame; a frame whose Key is a
@@ -82,7 +94,14 @@ internal static class YamlFlattener
                     if (!flattenArrays && frames[^1].UnderIndex)
                         break;
 
-                    result[Path(frames, key)] = Encoding.UTF8.GetString(reader.ValueSpan);
+                    var parts = Segments(frames, key);
+                    map.Set(
+                        yaml,
+                        string.Join(':', parts),
+                        Encoding.UTF8.GetString(reader.ValueSpan),
+                        CfgFlatKeyMap.Origin(parts),
+                        reader.TokenStart
+                    );
                     pendingKey = null;
                     break;
                 }
@@ -129,21 +148,36 @@ internal static class YamlFlattener
                         break;
 
                     var current = frames[^1];
-                    var index = current.NextIndex++;
+                    var itemIndex = (current.NextIndex++).ToString(CultureInfo.InvariantCulture);
                     if (flattenArrays)
-                        result[$"{Path(frames, null)}:{index}"] = Encoding.UTF8.GetString(
-                            reader.ValueSpan
+                    {
+                        // An index is a path segment like any other, so a literal "a:1" key
+                        // collides with item 1 of sequence a.
+                        var itemPath = Segments(frames, null);
+                        itemPath.Add(itemIndex);
+                        map.Set(
+                            yaml,
+                            string.Join(':', itemPath),
+                            Encoding.UTF8.GetString(reader.ValueSpan),
+                            CfgFlatKeyMap.Origin(itemPath),
+                            reader.TokenStart
                         );
-                    pendingItemIndex = index.ToString(CultureInfo.InvariantCulture);
+                    }
+                    pendingItemIndex = itemIndex;
                     break;
                 }
             }
         }
 
-        return result;
+        return map.Values;
     }
 
-    private static string Path(List<Frame> frames, string? leaf)
+    /// <summary>
+    /// The raw path segments of one write, in document order. They are the identity a collision
+    /// is detected on: a nested b and a literal "a:b" both join to the key a:b but come from two
+    /// different segment lists, which is exactly what <see cref="CfgFlatKeyMap"/> reports.
+    /// </summary>
+    private static List<string> Segments(List<Frame> frames, string? leaf)
     {
         var parts = new List<string>(frames.Count);
         for (var i = 1; i < frames.Count; i++)
@@ -151,7 +185,7 @@ internal static class YamlFlattener
                 parts.Add(frames[i].Key);
         if (!string.IsNullOrEmpty(leaf))
             parts.Add(leaf!);
-        return string.Join(':', parts);
+        return parts;
     }
 
     // underIndex: this frame's path already runs through a sequence index segment - the item

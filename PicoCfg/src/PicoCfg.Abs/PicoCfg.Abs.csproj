@@ -16,6 +16,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      The format backends (PicoCfg.Ini / PicoCfg.Yaml / PicoCfg.Toml) flatten through
+      CfgFlatKeyMap; it stays internal so the only public surface of the key-collision contract is
+      CfgKeyCollisionException.
+    -->
+    <InternalsVisibleTo Include="PicoCfg.Ini" />
+    <InternalsVisibleTo Include="PicoCfg.Yaml" />
+    <InternalsVisibleTo Include="PicoCfg.Toml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference
       Include="..\PicoCfg.Gen\PicoCfg.Gen.csproj"
       OutputItemType="Analyzer"
