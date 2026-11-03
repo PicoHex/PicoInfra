@@ -325,6 +325,7 @@ All wiring is resolved at compile time — zero reflection. See [PicoDI.Sample.A
 
 - **Unregistered service**: `GetService()` throws `PicoDiException`. Use `TryGetService()` / `TryGetServices()` for optional dependencies.
 - **Circular dependency**: a singleton or scoped factory that resolves the service it is constructing — directly or through a chain — throws `PicoDiException` naming the cycle (`A -> B -> A`) instead of overflowing the stack. (Transient-to-transient cycles are still not detected: transients are not tracked as under construction.)
+- **Exception type change for scoped cycles**: this diagnostic replaced an older failure mode. A *scoped* cycle used to surface as `System.InvalidOperationException` (`ValueFactory attempted to access the Value property of this instance.`) — the scoped instance is a `Lazy<T>`, and `Lazy` throws on re-entrance. It now surfaces as `PicoDiException`, which derives from `Exception` and **not** from `InvalidOperationException`: code that wrapped a scoped resolve in `catch (InvalidOperationException)` silently stops catching it, so catch `PicoDiException` (or `Exception`) instead. Singleton cycles went from a `Stack overflow.` process abort to the same `PicoDiException`.
 - **Disposed scope/container**: Throws `ObjectDisposedException`.
 - **Source generator not applied**: Throws `SourceGeneratorRequiredException` for type-based registrations.
 

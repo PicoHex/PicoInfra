@@ -213,11 +213,19 @@ public class CircularDependencyTests
     /// The in-progress marker is keyed by the owning scope for scoped services, so a factory that
     /// builds the same service type in a nested child scope is not misreported as a cycle: those are
     /// distinct instances (Microsoft.Extensions.DependencyInjection allows the same pattern).
+    /// <para>
+    /// The child scopes the factory creates are disposed here, right after the resolution they exist
+    /// for. The factory is a synchronous <c>Func&lt;ISvcScope, object&gt;</c> and <see cref="ISvcScope"/> is
+    /// <see cref="IAsyncDisposable"/>-only, so neither <c>using</c> nor <c>await using</c> can be written
+    /// inside it; the scopes are collected instead and drained in a <c>finally</c>, so no live scope
+    /// survives the test.
+    /// </para>
     /// </summary>
     [Test]
     public async Task ScopedFactoryResolvingSameTypeInAChildScope_IsNotReportedAsACycle()
     {
         var depth = 0;
+        var childScopes = new List<ISvcScope>();
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
         container.RegisterScoped<NestedScopeService>(sp =>
         {
@@ -225,6 +233,7 @@ public class CircularDependencyTests
             if (level < 3)
             {
                 var child = sp.CreateScope();
+                childScopes.Add(child);
                 _ = child.GetService<NestedScopeService>();
             }
 
@@ -233,11 +242,78 @@ public class CircularDependencyTests
 
         await using var scope = container.CreateScope();
 
-        var resolved = scope.GetService<NestedScopeService>();
+        try
+        {
+            var resolved = scope.GetService<NestedScopeService>();
 
-        await Assert.That(resolved.Level).IsEqualTo(1);
-        await Assert.That(depth).IsEqualTo(3);
+            await Assert.That(resolved.Level).IsEqualTo(1);
+            await Assert.That(depth).IsEqualTo(3);
+        }
+        finally
+        {
+            foreach (var child in childScopes)
+                await child.DisposeAsync();
+        }
+
         await Assert.That(SvcConstructionGuard.DepthForCurrentThread).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// <c>Type.FullName</c> is <see langword="null"/> for a service key that is a generic parameter, so
+    /// the cycle message used to interpolate an empty service name where every neighbouring message in
+    /// the module guards it (<c>FullName ?? Name</c>). The registration is keyed by the open
+    /// definition's type parameter, whose <see cref="Type.Name"/> is <c>TService</c>.
+    /// </summary>
+    [Test]
+    public async Task CycleMessage_NamesAGenericParameterService_WhenFullNameIsNull()
+    {
+        var thrown = await TriggerGenericParameterCycleAsync();
+
+        await Assert.That(thrown).IsTypeOf<PicoDiException>();
+        await Assert.That(thrown!.Message).Contains("TService -> TService");
+        await Assert
+            .That(thrown.Message)
+            .Contains("Service 'TService' is already under construction");
+        await Assert.That(SvcConstructionGuard.DepthForCurrentThread).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// The per-thread frame store is reused across constructions instead of being allocated and
+    /// dropped per outermost resolve: <c>Push</c> used to allocate a fresh <see cref="List{T}"/> and
+    /// <c>Pop</c> dropped it as soon as it emptied, so N back-to-back constructions allocated N lists
+    /// (and re-grew past the initial capacity of 4). Measured with
+    /// <see cref="GC.GetAllocatedBytesForCurrentThread"/> around 1000 push/pop pairs on one thread.
+    /// </summary>
+    [Test]
+    public async Task ConstructionGuard_AllocatesNothingPerPushPopPair()
+    {
+        await using var container = new SvcContainer(autoConfigureFromGenerator: false);
+        await using var scope = container.CreateScope();
+        var ownerScope = (SvcScope)scope;
+        var registration = SvcRuntimeRegistration.Create(
+            SvcDescriptor.Create(
+                typeof(HealthyService),
+                static _ => new HealthyService(),
+                SvcLifetime.Scoped
+            )
+        );
+
+        // Warm-up: the first pair may allocate the per-thread store (and its first capacity).
+        SvcConstructionGuard.Push(container, ownerScope, registration);
+        SvcConstructionGuard.Pop();
+
+        const int pairs = 1000;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < pairs; i++)
+        {
+            SvcConstructionGuard.Push(container, ownerScope, registration);
+            SvcConstructionGuard.Pop();
+        }
+
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        await Assert.That(SvcConstructionGuard.DepthForCurrentThread).IsEqualTo(0);
+        await Assert.That(allocated).IsEqualTo(0L);
     }
 
     private static Exception? Capture(Action action)
@@ -298,5 +374,26 @@ public class CircularDependencyTests
     private sealed class NestedScopeService(int level)
     {
         internal int Level { get; } = level;
+    }
+
+    private static class GenericParameterCycleProbe<TService>
+        where TService : class;
+
+    /// <summary>
+    /// Registers and resolves a scoped service keyed by a generic <i>parameter</i> type — the one shape
+    /// whose <see cref="Type.FullName"/> is <see langword="null"/> (<c>typeof(T)</c> inside a closed
+    /// instantiation substitutes the type argument, so the parameter is read off the open definition).
+    /// The factory re-resolves the very service it is building, i.e. a self-cycle.
+    /// </summary>
+    private static async Task<Exception?> TriggerGenericParameterCycleAsync()
+    {
+        var serviceType = typeof(GenericParameterCycleProbe<>).GetGenericArguments()[0];
+        await using var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.Register(
+            SvcDescriptor.Create(serviceType, sp => sp.GetService(serviceType), SvcLifetime.Scoped)
+        );
+        await using var scope = container.CreateScope();
+
+        return Capture(() => scope.GetService(serviceType));
     }
 }

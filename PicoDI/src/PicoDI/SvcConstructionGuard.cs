@@ -69,6 +69,13 @@ internal readonly struct SvcConstructionFrame(
 /// </remarks>
 internal static class SvcConstructionGuard
 {
+    /// <summary>
+    /// The per-thread frame store. Allocated once per thread and then reused: <see cref="Push"/> adds
+    /// and <see cref="Pop"/> removes the last frame, but the (now empty) list is kept so N back-to-back
+    /// constructions on one thread allocate nothing after the first. <see cref="List{T}.RemoveAt"/> and
+    /// <see cref="List{T}.Clear"/> both null the vacated slots for a reference-containing element type,
+    /// so keeping the list cannot retain a container or a scope past the outermost resolve.
+    /// </summary>
     [ThreadStatic]
     private static List<SvcConstructionFrame>? _frames;
 
@@ -144,7 +151,7 @@ internal static class SvcConstructionGuard
         var path = BuildPath(frames, cycleStart, registration.ServiceType);
 
         return new PicoDiException(
-            $"Circular dependency detected: {path}. Service '{registration.ServiceType.FullName}' "
+            $"Circular dependency detected: {path}. Service '{registration.ServiceType.FullName ?? registration.ServiceType.Name}' "
                 + $"is already under construction on this thread, so its {FormatLifetime(lifetime)} factory "
                 + "cannot resolve it. Break the cycle (inject a factory, a lazy wrapper, or a "
                 + "separate service) — the container cannot construct it."
@@ -155,6 +162,12 @@ internal static class SvcConstructionGuard
     /// Records <paramref name="registration"/> as under construction on the current thread.
     /// Must be paired with <see cref="Pop"/> in a <c>finally</c>.
     /// </summary>
+    /// <remarks>
+    /// The frame store is allocated on the first construction of a thread and reused afterwards, so a
+    /// thread that builds N services back-to-back allocates one list, not N (and grows it past the
+    /// initial capacity of 4 at most once). The empty list is kept — it holds no container, scope or
+    /// registration, because the slot that <see cref="Pop"/> vacates is cleared.
+    /// </remarks>
     internal static void Push(
         SvcContainer container,
         SvcScope? ownerScope,
@@ -172,8 +185,9 @@ internal static class SvcConstructionGuard
     }
 
     /// <summary>
-    /// Clears the innermost construction frame. The list itself is dropped when it empties so a
-    /// thread never retains a container or a scope after the outermost resolve returns.
+    /// Clears the innermost construction frame. The list is kept (and stays empty) so the next
+    /// construction on this thread does not allocate; the vacated slot is cleared, so a thread never
+    /// retains a container or a scope after the outermost resolve returns.
     /// </summary>
     internal static void Pop()
     {
@@ -182,8 +196,6 @@ internal static class SvcConstructionGuard
             return;
 
         frames.RemoveAt(frames.Count - 1);
-        if (frames.Count == 0)
-            _frames = null;
     }
 
     /// <summary>
