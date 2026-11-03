@@ -16,6 +16,15 @@ Build with AOT validation:
 dotnet build PicoInfra.slnx -p:PublishAot=true
 ```
 
+### Local package feed (`artifacts/nupkg`)
+
+`scripts/release.ps1` packs into `artifacts/nupkg`, and `restore` uses that folder as an extra
+package source **only when the folder exists** (`Directory.Build.props`). It is deliberately not
+declared in `NuGet.config`: `artifacts/` is gitignored, so a fresh clone or worktree has no such
+folder, and a declared-but-missing local source fails restore with `NU1301` for every package that
+is not already in the global packages cache. Create the folder (or run the release script) if you
+want the feed; delete it to restore purely from nuget.org.
+
 ## Test Commands
 
 Run tests for individual modules:

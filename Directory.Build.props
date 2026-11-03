@@ -16,6 +16,21 @@
     <UseProjectReferences Condition="'$(UseProjectReferences)' == ''">true</UseProjectReferences>
   </PropertyGroup>
 
+  <!--
+    Optional local folder feed: scripts/release.ps1 packs this repo here and
+    sibling-repo development resolves not-yet-indexed versions from it.
+
+    It is added ONLY when the directory exists, and never in NuGet.config:
+    artifacts/ is gitignored, so a fresh clone or worktree has no such directory,
+    and a declared-but-missing local source fails restore with NU1301 for every
+    package that is not already in the global packages cache. This is the SDK's
+    own idiom (Microsoft.NET.NuGetOfflineCache.targets gates the same property on
+    Exists() for the offline/workload folder feeds).
+  -->
+  <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)artifacts/nupkg')">
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(MSBuildThisFileDirectory)artifacts/nupkg</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
   <!-- ===== AOT Strategy ===== -->
 
   <!--
