@@ -304,6 +304,86 @@ public class ConflictingInterfaceMemberTests : GeneratorTestBase
         await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// An explicit interface implementation inherits its constraints from the
+    /// interface member, so a <c>where</c> clause on it is CS0460. The colliding
+    /// member is therefore emitted without one — <c>where T : class</c>/<c>struct</c>
+    /// is legal there, which is why the plainer shapes below never caught it
+    /// (review-2026-11-02/rev-aop-3c.md, D2).
+    /// </summary>
+    [Test]
+    public async Task SameNamedGenericMethodsWithConstraints_ExplicitImplementationCarriesNoWhereClause()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface IA
+                {
+                    int M<T>()
+                        where T : IComparable<T>;
+                }
+
+                public interface IB
+                {
+                    string M<T>()
+                        where T : IComparable<T>;
+                }
+
+                public interface IC : IA, IB { }
+
+                public class C : IC
+                {
+                    int IA.M<T>() => 1;
+                    string IB.M<T>() => "s";
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<IC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine("----- warnings -----");
+        Console.WriteLine(result.WarningText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // Both members are emitted, one of them explicitly, and the collision is
+        // reported instead of the member being dropped.
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO113")).IsEqualTo(1);
+        await Assert
+            .That(
+                result.GeneratedOutput.Contains("global::IB.M<T>")
+                    || result.GeneratedOutput.Contains("global::IA.M<T>")
+            )
+            .IsTrue();
+
+        // The explicitly-implemented member repeats no `where` clause: constraints
+        // for an explicit implementation are inherited (CS0460).
+        var explicitLines = result
+            .GeneratedOutput.Split('\n')
+            .Where(line =>
+                line.Contains("global::IB.M<T>(", StringComparison.Ordinal)
+                || line.Contains("global::IA.M<T>(", StringComparison.Ordinal)
+            )
+            .ToList();
+        Console.WriteLine($"EXPLICIT LINES: {string.Join(" || ", explicitLines)}");
+        await Assert.That(explicitLines.Count).IsGreaterThan(0);
+        await Assert
+            .That(explicitLines.Any(line => line.Contains("where", StringComparison.Ordinal)))
+            .IsFalse();
+
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+    }
+
     private static List<string> ReadCalls(Assembly assembly) =>
         (List<string>)assembly.GetType("CountingInterceptor")!.GetField("Calls")!.GetValue(null)!;
 }

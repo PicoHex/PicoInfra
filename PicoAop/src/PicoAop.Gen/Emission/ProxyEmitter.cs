@@ -182,7 +182,12 @@ internal static class ProxyEmitter
     {
         var method = member.Method!;
         var typeParameters = InvocationEmitter.TypeParameterList(method);
-        var constraints = InvocationEmitter.ConstraintClauses(method);
+        // An explicit interface implementation inherits the constraints of the
+        // interface member: repeating them is CS0460. A constraint-free method
+        // is unaffected, which is why the plainer collision shapes missed this.
+        var constraints = member.ExplicitInterface is null
+            ? InvocationEmitter.ConstraintClauses(method)
+            : string.Empty;
         var refPrefix =
             method.ReturnsByRef ? "ref "
             : method.ReturnsByRefReadonly ? "ref readonly "
