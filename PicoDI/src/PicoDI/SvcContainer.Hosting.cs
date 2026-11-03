@@ -34,11 +34,27 @@ public sealed partial class SvcContainer
     );
 
     /// <summary>
-    /// Grace period for the stop phases that run on the container's own initiative: the
-    /// disposal path and the rollback of a failed start. A cancelled start token must not
-    /// skip the cleanup, and a service that ignores cancellation must not hang it forever.
+    /// Wall-clock budget of ONE stop pass that runs on the container's own initiative: the
+    /// disposal path and the rollback of a failed start. A cancelled start token must not skip
+    /// the cleanup, and a service that ignores cancellation must not hang it forever — the pass
+    /// gets this much time in total, after which its remaining phases are abandoned and reported
+    /// as <see cref="TimeoutException"/> (review-2026-11-02 defect L5: this used to be a
+    /// <c>CancellationTokenSource</c> that bounded nothing, because a token only signals).
     /// </summary>
-    private static readonly TimeSpan HostedSvcStopTimeout = TimeSpan.FromSeconds(30);
+    /// <remarks>
+    /// An instance member, not a static, so a test can shrink the window without affecting a test
+    /// that runs in parallel. The caller-driven <c>StopAsync(token)</c> path is not bounded by it:
+    /// there the caller's token is the control surface.
+    /// </remarks>
+    internal TimeSpan HostedSvcStopTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// <see cref="Exception.Data"/> key under which the rollback of a failed start reports the
+    /// stop phases that failed while it ran — a <c>List&lt;Exception&gt;</c>, present only when
+    /// something failed. The start exception itself stays unwrapped (the caller receives the
+    /// service's own exception), so <c>Data</c> is the channel that does not hide it.
+    /// </summary>
+    internal const string RollBackStopFailuresKey = "PicoDI.HostedSvcRollBackStopFailures";
 
     private bool TryTransitionToStarted()
     {
@@ -187,7 +203,13 @@ public sealed partial class SvcContainer
                 if (instance is not null)
                     _stoppedHostedInstances.Add(instance);
 
-                await RollBackStartedServicesAsync(started).ConfigureAwait(false);
+                // review-2026-11-02 defect L5: this list used to be collected and never read, so
+                // a failed rollback stop lived only in OnError. It now travels on the exception
+                // the caller receives - Data is the channel that keeps that exception unwrapped.
+                var rollBackStopFailures = await RollBackStartedServicesAsync(started)
+                    .ConfigureAwait(false);
+                if (rollBackStopFailures.Count > 0)
+                    ex.Data[RollBackStopFailuresKey] = rollBackStopFailures;
 
                 // The .NET host contract: a failed start faults the caller's StartAsync.
                 // Rethrown with the original instance, type, message and stack trace, so
@@ -203,13 +225,15 @@ public sealed partial class SvcContainer
     /// background work running behind it would leak until finalization.
     /// </summary>
     /// <remarks>
-    /// Stop failures here are diagnostics only (<see cref="OnError"/>): the caller receives the
-    /// start failure, never a stop failure that hides it. The stop phases use their own
-    /// <see cref="HostedSvcStopTimeout"/> window because the start token may already be cancelled.
-    /// The host is left <i>stopped</i> — a later <c>StopAsync</c>/<c>DisposeAsync</c> must not run
-    /// a second stop over services that are already down.
+    /// Stop failures here never hide the start failure: the caller receives the start exception,
+    /// unwrapped, and the rollback's own failures travel on its <see cref="Exception.Data"/> under
+    /// <see cref="RollBackStopFailuresKey"/> (plus <see cref="OnError"/>). The pass gets one
+    /// <see cref="HostedSvcStopTimeout"/> budget — it is the token the services receive AND the
+    /// deadline their phases are awaited with, so a service that ignores the token is abandoned
+    /// instead of hanging the rollback forever. The host is left <i>stopped</i> — a later
+    /// <c>StopAsync</c>/<c>DisposeAsync</c> must not run a second stop over services already down.
     /// </remarks>
-    private async ValueTask RollBackStartedServicesAsync(
+    private async ValueTask<List<Exception>> RollBackStartedServicesAsync(
         List<(SvcRuntimeRegistration Registration, object Instance)> started
     )
     {
@@ -222,11 +246,12 @@ public sealed partial class SvcContainer
             if (!_stoppedHostedInstances.Add(instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cts.Token, stopFailures)
+            await StopInstanceAsync(registration, instance, cts.Token, stopFailures, cts.Token)
                 .ConfigureAwait(false);
         }
 
         Interlocked.Exchange(ref _hostedState, 2);
+        return stopFailures;
     }
 
     /// <summary>
@@ -257,7 +282,17 @@ public sealed partial class SvcContainer
     /// disposal path can run it without the disposed guard — <see cref="DisposeAsync"/> sets the
     /// flag it would be checking, and a disposal path never throws.
     /// </summary>
-    private async Task StopHostedServicesOnceAsync(CancellationToken cancellationToken)
+    /// <param name="cancellationToken">Token handed to the services.</param>
+    /// <param name="deadline">
+    /// Deadline the individual phases are awaited with, in addition to the token they receive.
+    /// Default (not cancellable) for the caller-driven <c>StopAsync</c>: there the caller's token
+    /// is the control surface and an unbounded wait is the documented behaviour. The
+    /// container-initiated passes pass their <see cref="HostedSvcStopTimeout"/> token here.
+    /// </param>
+    private async Task StopHostedServicesOnceAsync(
+        CancellationToken cancellationToken,
+        CancellationToken deadline = default
+    )
     {
         if (!TryTransitionToStopped())
             return;
@@ -265,7 +300,7 @@ public sealed partial class SvcContainer
         await _hostingLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            await StopHostedServicesCoreAsync(cancellationToken).ConfigureAwait(false);
+            await StopHostedServicesCoreAsync(cancellationToken, deadline).ConfigureAwait(false);
         }
         finally
         {
@@ -273,7 +308,10 @@ public sealed partial class SvcContainer
         }
     }
 
-    private async Task StopHostedServicesCoreAsync(CancellationToken cancellationToken)
+    private async Task StopHostedServicesCoreAsync(
+        CancellationToken cancellationToken,
+        CancellationToken deadline = default
+    )
     {
         var registrations = Volatile.Read(ref _hostedRegistrations);
         if (registrations is null or { Count: 0 })
@@ -295,7 +333,7 @@ public sealed partial class SvcContainer
             if (!_stoppedHostedInstances.Add(instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cancellationToken, failures)
+            await StopInstanceAsync(registration, instance, cancellationToken, failures, deadline)
                 .ConfigureAwait(false);
         }
 
@@ -320,7 +358,8 @@ public sealed partial class SvcContainer
         SvcRuntimeRegistration registration,
         object instance,
         CancellationToken cancellationToken,
-        List<Exception> failures
+        List<Exception> failures,
+        CancellationToken deadline = default
     )
     {
         if (instance is IHostedLifecycleSvc lifecycle)
@@ -329,21 +368,24 @@ public sealed partial class SvcContainer
                     "Stopping",
                     registration,
                     () => lifecycle.StoppingAsync(cancellationToken),
-                    failures
+                    failures,
+                    deadline
                 )
                 .ConfigureAwait(false);
             await StopPhaseAsync(
                     "Stop",
                     registration,
                     () => lifecycle.StopAsync(cancellationToken),
-                    failures
+                    failures,
+                    deadline
                 )
                 .ConfigureAwait(false);
             await StopPhaseAsync(
                     "Stopped",
                     registration,
                     () => lifecycle.StoppedAsync(cancellationToken),
-                    failures
+                    failures,
+                    deadline
                 )
                 .ConfigureAwait(false);
         }
@@ -353,7 +395,8 @@ public sealed partial class SvcContainer
                     "Stop",
                     registration,
                     () => hosted.StopAsync(cancellationToken),
-                    failures
+                    failures,
+                    deadline
                 )
                 .ConfigureAwait(false);
         }
@@ -363,12 +406,14 @@ public sealed partial class SvcContainer
         string phase,
         SvcRuntimeRegistration registration,
         Func<Task> action,
-        List<Exception> failures
+        List<Exception> failures,
+        CancellationToken deadline = default
     )
     {
         try
         {
-            await action().ConfigureAwait(false);
+            await RunPhaseWithinDeadlineAsync(action, deadline, phase, registration)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -380,12 +425,59 @@ public sealed partial class SvcContainer
         }
     }
 
+    /// <summary>
+    /// Awaits one stop phase and enforces the deadline of the pass it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="CancellationTokenSource"/> only signals: handing its token to a service that
+    /// ignores it bounds nothing, which is what made <see cref="HostedSvcStopTimeout"/> a claim
+    /// rather than a bound (review-2026-11-02 defect L5). Awaiting through
+    /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline;
+    /// the abandoned phase is reported as a <see cref="TimeoutException"/> and the pass keeps
+    /// going with its remaining phases, so a hung service cannot hold a disposal or a rollback.
+    /// A phase whose deadline had already expired is reported without being started, so the
+    /// failure says what happened instead of blaming a service that never ran.
+    /// </remarks>
+    private async Task RunPhaseWithinDeadlineAsync(
+        Func<Task> action,
+        CancellationToken deadline,
+        string phase,
+        SvcRuntimeRegistration registration
+    )
+    {
+        if (!deadline.CanBeCanceled)
+        {
+            await action().ConfigureAwait(false);
+            return;
+        }
+
+        if (deadline.IsCancellationRequested)
+            throw new TimeoutException(
+                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' was not run: the stop pass's {DescribeStopTimeout()} deadline had already expired."
+            );
+
+        var phaseTask = action();
+        try
+        {
+            await phaseTask.WaitAsync(deadline).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!phaseTask.IsCompleted)
+        {
+            throw new TimeoutException(
+                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' did not complete within the stop pass's {DescribeStopTimeout()} deadline and was abandoned. The service ignores the cancellation token it was given."
+            );
+        }
+    }
+
+    private string DescribeStopTimeout() =>
+        string.Create(CultureInfo.InvariantCulture, $"{HostedSvcStopTimeout.TotalSeconds} s");
+
     private async ValueTask StopHostedServicesAsync()
     {
         using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
         try
         {
-            await StopHostedServicesOnceAsync(cts.Token).ConfigureAwait(false);
+            await StopHostedServicesOnceAsync(cts.Token, cts.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

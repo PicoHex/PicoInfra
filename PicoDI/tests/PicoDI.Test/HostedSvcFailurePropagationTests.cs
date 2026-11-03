@@ -250,4 +250,152 @@ public class HostedSvcFailurePropagationTests
 
         await builder.DisposeAsync();
     }
+
+    // ------------------------------------------------------------------
+    // L5 — the stop deadline is real, and the rollback's failures are read.
+    // ------------------------------------------------------------------
+
+    /// <summary>The key this test family pins on <see cref="Exception.Data"/>.</summary>
+    private const string RollBackStopFailuresKey = "PicoDI.HostedSvcRollBackStopFailures";
+
+    /// <summary>Short enough to keep the suite fast; the production default stays 30 s.</summary>
+    private static readonly TimeSpan TestStopDeadline = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>Starts cleanly; <c>StopAsync</c> ignores its token and never completes.</summary>
+    private sealed class HangingOnStopSvc : IHostedSvc
+    {
+        private readonly TaskCompletionSource<bool> _never = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+
+        public bool StopEntered { get; private set; }
+
+        /// <summary>Lets the abandoned stop task finish, so the test leaves nothing behind.</summary>
+        public void Release() => _never.TrySetResult(true);
+
+        public Task StartAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public Task StopAsync(CancellationToken ct)
+        {
+            StopEntered = true;
+            return _never.Task; // deliberately ignores ct
+        }
+    }
+
+    [Test]
+    public async Task DisposeAsync_HostedSvcIgnoringTheStopToken_AbandonsTheStopAtTheDeadline()
+    {
+        // review-2026-11-02 defect L5: a CancellationToken only signals, so the 30 s CTS bounded
+        // nothing — a service that ignores it hung DisposeAsync forever, exactly what the comment
+        // claimed it prevented. The window is now a real wait: the phase is abandoned at the
+        // deadline, reported as a TimeoutException, and the rest of the disposal still runs.
+        var errors = new ErrorRecorder();
+        var svc = new HangingOnStopSvc();
+        var container = new SvcContainer(autoConfigureFromGenerator: false)
+        {
+            HostedSvcStopTimeout = TestStopDeadline,
+        };
+        container.OnError = errors.Record;
+        container.RegisterHostedSvc<HangingOnStopSvc>(_ => svc);
+        container.Build();
+        var host = new SvcHost(container);
+        await host.StartAsync();
+
+        // The 10 s guard is the assertion: without a real deadline this await never returns.
+        await container.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+
+        await Assert.That(svc.StopEntered).IsTrue();
+
+        // Two reports, and they are the two that exist on this path: the phase-level TimeoutException
+        // from StopPhaseAsync and the disposal wrapper's AggregateException carrying it. Exactly one
+        // TimeoutException, and it is the first (the phase) entry.
+        var timeouts = errors.Entries.Count(e => e.Error is TimeoutException);
+        await Assert.That(timeouts).IsEqualTo(1);
+        await Assert.That(errors.Entries[0].Error).IsTypeOf<TimeoutException>();
+        await Assert
+            .That(errors.Entries[0].Error.Message.Contains("deadline", StringComparison.Ordinal))
+            .IsTrue();
+        await Assert
+            .That(errors.Entries[0].Context.Contains("Stop phase", StringComparison.Ordinal))
+            .IsTrue();
+
+        svc.Release();
+    }
+
+    [Test]
+    public async Task StartAsync_RollbackStopIgnoringTheToken_AbandonsItAndReportsItOnTheStartException()
+    {
+        // Same deadline on the other container-initiated pass: the rollback of a failed start.
+        // The caller still receives the START failure (unwrapped, finding 2) and the abandoned
+        // stop is folded into its Data instead of being collected and dropped (L5).
+        var log = new List<string>();
+        var errors = new ErrorRecorder();
+        var hanging = new HangingOnStopSvc();
+        var container = new SvcContainer(autoConfigureFromGenerator: false)
+        {
+            HostedSvcStopTimeout = TestStopDeadline,
+        };
+        container.OnError = errors.Record;
+        container.RegisterHostedSvc<HangingOnStopSvc>(_ => hanging);
+        container.RegisterHostedSvc<BoomOnStartSvc>(_ => new BoomOnStartSvc("boom", log));
+        container.Build();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await new SvcHost(container).StartAsync().WaitAsync(TimeSpan.FromSeconds(10))
+        );
+
+        await Assert.That(ex.Message).IsEqualTo("boom");
+        await Assert.That(hanging.StopEntered).IsTrue();
+
+        await Assert.That(ex.Data.Contains(RollBackStopFailuresKey)).IsTrue();
+        var failures = (List<Exception>)ex.Data[RollBackStopFailuresKey]!;
+        await Assert.That(failures.Count).IsEqualTo(1);
+        await Assert.That(failures[0]).IsTypeOf<TimeoutException>();
+        await Assert
+            .That(failures[0].Message.Contains("deadline", StringComparison.Ordinal))
+            .IsTrue();
+
+        hanging.Release();
+    }
+
+    [Test]
+    public async Task StartAsync_RollbackStopThrows_FoldsTheFailureIntoTheStartExceptionData()
+    {
+        // The other half of L5: RollBackStartedServicesAsync collected stopFailures and never
+        // read them, so a failed rollback stop existed only in OnError.
+        var log = new List<string>();
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.RegisterHostedSvc<BoomOnStopSvc>(_ => new BoomOnStopSvc("stop-boom", log));
+        container.RegisterHostedSvc<BoomOnStartSvc>(_ => new BoomOnStartSvc("boom", log));
+        container.Build();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new SvcHost(container).StartAsync()
+        );
+
+        await Assert.That(ex.Message).IsEqualTo("boom");
+        await Assert.That(ex.Data.Contains(RollBackStopFailuresKey)).IsTrue();
+        var failures = (List<Exception>)ex.Data[RollBackStopFailuresKey]!;
+        await Assert.That(failures.Count).IsEqualTo(1);
+        await Assert.That(failures[0].Message).IsEqualTo("boom-stop");
+    }
+
+    [Test]
+    public async Task StartAsync_CleanRollback_AddsNoFailureData()
+    {
+        // ...and a start failure whose rollback went cleanly carries no such entry: the key is a
+        // report about the rollback, not decoration on every failure.
+        var log = new List<string>();
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.RegisterHostedSvc<RecordingSvc>(_ => new RecordingSvc("one", log));
+        container.RegisterHostedSvc<BoomOnStartSvc>(_ => new BoomOnStartSvc("boom", log));
+        container.Build();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new SvcHost(container).StartAsync()
+        );
+
+        await Assert.That(ex.Data.Contains(RollBackStopFailuresKey)).IsFalse();
+        await Assert.That(log[2]).IsEqualTo("stop:one");
+    }
 }
