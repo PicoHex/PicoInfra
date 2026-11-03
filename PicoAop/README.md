@@ -156,20 +156,26 @@ container.Register<IHealthCheck, HealthCheck>()
 
 ## Limitations
 
-- **ref / out / in parameters** — delegated directly without interception (C# structs cannot store ref fields)
-- **Generic methods** — type parameter substitution not implemented
-- **Properties** — delegated transparently, not intercepted
+- **ref / out / in parameters** — delegated directly without interception (C# structs cannot store ref fields); reported as `PICO110`
+- **Indexers, events, ref-returning methods, ref struct / pointer parameters** — delegated directly; reported as `PICO111`
+- **Overloads that differ only by generic type arguments** (`M(List<int>)` / `M(List<string>)`) — the generated invocation name is built from the parameter's short type name, so those members are delegated; reported as `PICO113`
+- **Properties with an `init` accessor** — cannot be implemented by a proxy, so interception for that service is skipped; reported as `PICO112`
+
+Properties (getter and setter), generic methods (type parameters and their constraints) and members inherited from base interfaces are intercepted.
 
 ## Diagnostics
 
 | Code | Severity | Description |
 |------|----------|-------------|
-| PICO010 | Error | Type in InterceptBy<T>() does not implement IInterceptor |
-| PICO011 | Error | WhereImplements<T> requires an interface type |
-| PICO012 | Warning | No interceptors matched for service |
-| PICO013 | Error | Interceptor both globally declared and per-service excluded |
-| PICO014 | Warning | InterceptBy<T>() follows multiple Register calls |
-| PICO015 | Warning | Sanitized type names collide — second type skipped |
+| PICO101 | Error | Type in InterceptBy<T>() (or the registered type) is sealed |
+| PICO102 | Error | Registered type is a value type |
+| PICO105 | Error | Interceptor type does not implement IInterceptor |
+| PICO110 | Warning | Method with ref/out/in parameters is delegated without interception |
+| PICO111 | Warning | Indexer, event, ref-returning method or ref struct/pointer member is delegated without interception |
+| PICO112 | Error | Property with an `init` accessor cannot be proxied — interception for the service is skipped |
+| PICO113 | Warning | Two members share one generated invocation name (overloads differing only by generic type arguments) — those members are delegated |
+
+Registration-analysis diagnostics (PICO002–PICO006) come from PicoDI.Gen.
 
 ## Packages
 
@@ -197,8 +203,8 @@ All wiring is resolved at compile time. At runtime:
 | **Debug generated code** | ✅ Readable C# | ❌ IL | ❌ IL |
 | **Interceptor interface** | 4 methods | `IInterceptor` (1 method) | Override aspect class |
 | **Method interception** | ✅ | ✅ | ✅ |
-| **Property interception** | ❌ Delegated | ✅ | ✅ |
+| **Property interception** | ✅ | ✅ | ✅ |
 | **ref/out/in params** | ❌ Delegated | ✅ | ✅ |
-| **Generic methods** | ❌ Future | ✅ | ✅ |
+| **Generic methods** | ✅ | ✅ | ✅ |
 
 [← Back to PicoInfra](../README.md)

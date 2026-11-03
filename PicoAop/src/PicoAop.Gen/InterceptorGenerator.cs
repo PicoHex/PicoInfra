@@ -3,6 +3,8 @@ namespace PicoAop.Gen;
 [Generator(LanguageNames.CSharp)]
 public sealed partial class InterceptorGenerator : IIncrementalGenerator
 {
+    private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var interceptionCalls = context
@@ -108,6 +110,11 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         sb.AppendLine("#nullable enable");
         sb.AppendLine($"namespace {PicoAopNames.GeneratedNamespace};");
         sb.AppendLine("using global::PicoAop.Abs;");
+        // The generated types name System.Type, System.Func and
+        // System.Threading.Tasks.ValueTask directly; a consumer without
+        // ImplicitUsings cannot see them otherwise.
+        sb.AppendLine("using global::System;");
+        sb.AppendLine("using global::System.Threading.Tasks;");
         sb.AppendLine();
 
         var wrappersSb = new StringBuilder();
@@ -125,6 +132,11 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(
                     Diagnostic.Create(PicoAopDiag.SealedType, Location.None, namedSvc.Name)
                 );
+                // PicoDI.Gen names the wrapper from the registration alone, so
+                // a skipped service still has to publish one: otherwise the
+                // consumer sees a second, meaningless error (CS0234/CS0117) in
+                // PicoDI's generated file on top of the diagnostic.
+                wrappersSb.Append(EmitPassthroughWrapper(namedSvc, interceptorTypes));
                 continue;
             }
             if (namedSvc.IsValueType)
@@ -132,59 +144,39 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
                 spc.ReportDiagnostic(
                     Diagnostic.Create(PicoAopDiag.ValueType, Location.None, namedSvc.Name)
                 );
+                wrappersSb.Append(EmitPassthroughWrapper(namedSvc, interceptorTypes));
                 continue;
             }
 
-            var safeSvc = InvocationEmitter.BuildSafeServiceName(namedSvc);
-            var methods = namedSvc
-                .GetMembers()
-                .OfType<IMethodSymbol>()
-                .Where(m =>
-                    m.MethodKind == MethodKind.Ordinary
-                    && m.DeclaredAccessibility == Accessibility.Public
-                    && !m.IsStatic
-                );
-
-            // Emit Invocation structs with _i0.._iN fields
-            foreach (var method in methods)
+            // Decide once, up front, which members can be intercepted: the
+            // struct side and the proxy side both read this plan, and every
+            // member the generator cannot emit reports a diagnostic instead of
+            // landing as CS errors in a file the consumer cannot edit.
+            var diagnostics = new List<Diagnostic>();
+            var plan = ServicePlanner.Build(namedSvc, diagnostics);
+            foreach (var diagnostic in diagnostics)
+                spc.ReportDiagnostic(diagnostic);
+            if (plan is null)
             {
-                if (method.Parameters.Any(p => p.RefKind != RefKind.None))
-                {
-                    spc.ReportDiagnostic(
-                        Diagnostic.Create(
-                            PicoAopDiag.RefOutMethod,
-                            Location.None,
-                            method.Name,
-                            namedSvc.Name
-                        )
-                    );
-                    continue;
-                }
-                sb.AppendLine(EmitMultiInvocationStruct(safeSvc, method, interceptorTypes));
+                wrappersSb.Append(EmitPassthroughWrapper(namedSvc, interceptorTypes));
+                continue;
             }
 
-            // Property getter/setter structs
-            foreach (
-                var prop in namedSvc
-                    .GetMembers()
-                    .OfType<IPropertySymbol>()
-                    .Where(p =>
-                        !p.IsIndexer
-                        && !p.IsStatic
-                        && p.DeclaredAccessibility == Accessibility.Public
-                    )
-            )
-            {
-                EmitPropertyStructs(sb, safeSvc, prop, namedSvc, interceptorTypes);
-            }
-
-            // Proxy class with all interceptors
-            sb.AppendLine(
-                ProxyEmitter.EmitInterceptedClassMulti(safeSvc, namedSvc, interceptorTypes)
+            var intSuffix = string.Join(
+                "_",
+                interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
             );
 
-            // Wrapper factory
-            wrappersSb.Append(EmitMultiWrappers(safeSvc, namedSvc, interceptorTypes));
+            foreach (var member in plan.Members.Where(m => m.IsIntercepted))
+            {
+                if (member.Method is { } method)
+                    sb.AppendLine(EmitInvocationStruct(plan.SafeName, method, interceptorTypes));
+                else if (member.Property is { } property)
+                    EmitPropertyStructs(sb, plan.SafeName, property, namedSvc, interceptorTypes);
+            }
+
+            sb.AppendLine(ProxyEmitter.EmitInterceptedClass(plan, interceptorTypes));
+            wrappersSb.Append(EmitWrappers(plan.SafeName, namedSvc, interceptorTypes, intSuffix));
         }
 
         if (sb.Length > 0)
@@ -199,16 +191,21 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             );
     }
 
-    private static string EmitMultiInvocationStruct(
+    /// <summary>
+    /// Emits the invocation struct for one method. A generic method becomes a
+    /// generic struct that repeats the method's type parameters and their
+    /// constraints (a type parameter is not in scope otherwise: CS0246), and
+    /// carries its own static delegate chain, because those delegates mention
+    /// the type parameters and therefore cannot live on the proxy class.
+    /// </summary>
+    private static string EmitInvocationStruct(
         string safeSvcName,
         IMethodSymbol method,
         List<ITypeSymbol> interceptorTypes
     )
     {
         var sb = new StringBuilder();
-        var svcFullName = method.ContainingType.ToDisplayString(
-            SymbolDisplayFormat.FullyQualifiedFormat
-        );
+        var svcFullName = method.ContainingType.ToDisplayString(Fq);
         var retType = method.ReturnType;
         var retNamed = retType as INamedTypeSymbol;
         var metaName = retNamed?.MetadataName;
@@ -228,26 +225,23 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             )
             : "object";
 
-        // Unique struct name — include all interceptor fully qualified names
         var intSuffix = string.Join(
             "_",
-            interceptorTypes.Select(t =>
-                InvocationEmitter.Sanitize(
-                    t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                )
-            )
+            interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
         );
-        var structName = InvocationEmitter.BuildStructName(safeSvcName, method);
-        structName = $"{structName}_{intSuffix}";
+        var structName = $"{InvocationEmitter.BuildStructName(safeSvcName, method)}_{intSuffix}";
+        var typeParameters = InvocationEmitter.TypeParameterList(method);
+        var constraints = InvocationEmitter.ConstraintClauses(method);
+        var selfType = $"{structName}{typeParameters}";
 
         var interfaceName = hasReturn ? $"IInvocation<{resultTypeName}>" : "IInvocation";
 
-        sb.AppendLine($"struct {structName} : {interfaceName}");
+        sb.AppendLine($"struct {structName}{typeParameters} : {interfaceName}{constraints}");
         sb.AppendLine("{");
         sb.AppendLine($"    internal readonly {svcFullName} _target;");
         for (int i = 0; i < interceptorTypes.Count; i++)
             sb.AppendLine(
-                $"    internal readonly {interceptorTypes[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} _i{i};"
+                $"    internal readonly {interceptorTypes[i].ToDisplayString(Fq)} _i{i};"
             );
         foreach (var p in method.Parameters)
             sb.AppendLine(
@@ -259,8 +253,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         var ctorParams = $"({svcFullName} target";
         for (int i = 0; i < interceptorTypes.Count; i++)
         {
-            var intName = interceptorTypes[i]
-                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            var intName = interceptorTypes[i].ToDisplayString(Fq);
             ctorParams += $", {intName} i{i}";
         }
         if (method.Parameters.Length > 0)
@@ -292,38 +285,46 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
             sb.AppendLine($"    public {resultTypeName} Result {{ get; set; }}");
         sb.AppendLine();
 
+        // An explicit type-argument list keeps the target call unambiguous even
+        // when the arguments cannot infer the method's type parameters.
         var paramArgs = string.Join(", ", method.Parameters.Select(p => $"_{p.Name}"));
+        var targetCall = $"_target.{method.Name}{typeParameters}({paramArgs})";
         if (isAsync)
         {
             var asyncRet = hasReturn ? $"ValueTask<{resultTypeName}>" : "ValueTask";
             var isOrigValueTask = metaName is "ValueTask" or "ValueTask`1";
             if (hasReturn && !isOrigValueTask)
-                sb.AppendLine(
-                    $"    internal {asyncRet} InvokeTargetAsync() => new(_target.{method.Name}({paramArgs}));"
-                );
+                sb.AppendLine($"    internal {asyncRet} InvokeTargetAsync() => new({targetCall});");
             else if (hasReturn)
-                sb.AppendLine(
-                    $"    internal {asyncRet} InvokeTargetAsync() => _target.{method.Name}({paramArgs});"
-                );
+                sb.AppendLine($"    internal {asyncRet} InvokeTargetAsync() => {targetCall};");
             else if (isOrigValueTask)
-                sb.AppendLine(
-                    $"    internal {asyncRet} InvokeTargetAsync() => _target.{method.Name}({paramArgs});"
-                );
+                sb.AppendLine($"    internal {asyncRet} InvokeTargetAsync() => {targetCall};");
             else
-                sb.AppendLine(
-                    $"    internal {asyncRet} InvokeTargetAsync() => new(_target.{method.Name}({paramArgs}));"
-                );
+                sb.AppendLine($"    internal {asyncRet} InvokeTargetAsync() => new({targetCall});");
         }
         else
         {
             if (hasReturn)
-                sb.AppendLine(
-                    $"    internal {resultTypeName} InvokeTarget() => _target.{method.Name}({paramArgs});"
-                );
+                sb.AppendLine($"    internal {resultTypeName} InvokeTarget() => {targetCall};");
             else
-                sb.AppendLine(
-                    $"    internal void InvokeTarget() => _target.{method.Name}({paramArgs});"
-                );
+                sb.AppendLine($"    internal void InvokeTarget() => {targetCall};");
+        }
+
+        // Generic methods only: the interceptor chain cannot be a member of the
+        // non-generic proxy class, because T does not exist there.
+        if (method.TypeParameters.Length > 0)
+        {
+            sb.AppendLine();
+            foreach (
+                var line in ProxyEmitter.EmitMethodChainFields(
+                    method,
+                    selfType,
+                    "s",
+                    interceptorTypes.Count,
+                    "internal"
+                )
+            )
+                sb.AppendLine(line);
         }
 
         sb.AppendLine("}");
@@ -338,43 +339,53 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         List<ITypeSymbol> interceptorTypes
     )
     {
-        var svcFullName = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var svcFullName = serviceType.ToDisplayString(Fq);
         var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var intSuffix = string.Join(
             "_",
-            interceptorTypes.Select(t =>
-                InvocationEmitter.Sanitize(
-                    t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                )
+            interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
+        );
+        var interceptorFields = string.Join(
+            ", ",
+            interceptorTypes.Select(
+                (t, i) => $"{t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} i{i}"
             )
+        );
+        var ctorInterceptorParams = interceptorTypes.Count > 0 ? ", " + interceptorFields : "";
+        var ctorInterceptorAssignments = string.Concat(
+            interceptorTypes.Select((_, i) => $"        _i{i} = i{i};\n")
         );
 
         if (prop.GetMethod?.DeclaredAccessibility == Accessibility.Public)
         {
-            sb.AppendLine(
-                $"struct Invocation_{safeSvcName}_{prop.Name}_Getter_{intSuffix} : IInvocation<{propType}>"
-            );
+            var structName = $"Invocation_{safeSvcName}_{prop.Name}_Getter_{intSuffix}";
+            sb.AppendLine($"struct {structName} : IInvocation<{propType}>");
             sb.AppendLine("{");
             sb.AppendLine($"    internal readonly {svcFullName} _target;");
             for (int i = 0; i < interceptorTypes.Count; i++)
                 sb.AppendLine(
                     $"    internal readonly {interceptorTypes[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} _i{i};"
                 );
+            sb.AppendLine(
+                $"    internal {structName}({svcFullName} target{ctorInterceptorParams})"
+            );
+            sb.AppendLine("    {");
+            sb.AppendLine("        _target = target;");
+            sb.Append(ctorInterceptorAssignments);
+            sb.AppendLine("        Result = default!;");
+            sb.AppendLine("    }");
             sb.AppendLine($"    public string MethodName => \"get_{prop.Name}\";");
             sb.AppendLine($"    public Type ServiceType => typeof({svcFullName});");
             sb.AppendLine($"    public {propType} Result {{ get; set; }}");
             sb.AppendLine($"    internal {propType} InvokeTarget() => _target.{prop.Name};");
             sb.AppendLine("}");
+            sb.AppendLine();
         }
 
-        if (
-            prop.SetMethod?.DeclaredAccessibility == Accessibility.Public
-            && !prop.SetMethod.IsInitOnly
-        )
+        if (prop.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false })
         {
-            sb.AppendLine(
-                $"struct Invocation_{safeSvcName}_{prop.Name}_Setter_{intSuffix} : IInvocation"
-            );
+            var structName = $"Invocation_{safeSvcName}_{prop.Name}_Setter_{intSuffix}";
+            sb.AppendLine($"struct {structName} : IInvocation");
             sb.AppendLine("{");
             sb.AppendLine($"    internal readonly {svcFullName} _target;");
             for (int i = 0; i < interceptorTypes.Count; i++)
@@ -382,28 +393,61 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
                     $"    internal readonly {interceptorTypes[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} _i{i};"
                 );
             sb.AppendLine($"    internal readonly {propType} _value;");
+            sb.AppendLine(
+                $"    internal {structName}({svcFullName} target{ctorInterceptorParams}, {propType} value)"
+            );
+            sb.AppendLine("    {");
+            sb.AppendLine("        _target = target;");
+            sb.Append(ctorInterceptorAssignments);
+            sb.AppendLine("        _value = value;");
+            sb.AppendLine("    }");
             sb.AppendLine($"    public string MethodName => \"set_{prop.Name}\";");
             sb.AppendLine($"    public Type ServiceType => typeof({svcFullName});");
             sb.AppendLine($"    internal void InvokeTarget() => _target.{prop.Name} = _value;");
             sb.AppendLine("}");
+            sb.AppendLine();
         }
     }
 
-    private static string EmitMultiWrappers(
-        string safeSvcName,
+    /// <summary>
+    /// The wrapper a skipped service still has to publish: it returns the inner
+    /// instance unwrapped, so the registration compiles and the diagnostic is
+    /// the only thing the consumer has to read.
+    /// </summary>
+    private static string EmitPassthroughWrapper(
         INamedTypeSymbol serviceType,
         List<ITypeSymbol> interceptorTypes
     )
     {
-        var svcFullName = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var svcFullName = serviceType.ToDisplayString(Fq);
+        var safeSvcName = InvocationEmitter.BuildSafeServiceName(serviceType);
         var intSuffix = string.Join(
             "_",
-            interceptorTypes.Select(t =>
-                InvocationEmitter.Sanitize(
-                    t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
+        );
+        var wrapperParams = string.Join(
+            ", ",
+            new[] { $"{svcFullName} inner" }.Concat(
+                interceptorTypes.Select(
+                    (t, i) => $"{t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} i{i}"
                 )
             )
         );
+
+        return $"public static partial class {PicoAopNames.WrappersClass}\n"
+            + "{\n"
+            + $"    public static {svcFullName} Wrap_{safeSvcName}_{intSuffix}({wrapperParams}) => inner;\n"
+            + "}\n";
+    }
+
+    private static string EmitWrappers(
+        string safeSvcName,
+        INamedTypeSymbol serviceType,
+        List<ITypeSymbol> interceptorTypes,
+        string intSuffix
+    )
+    {
+        var svcFullName = serviceType.ToDisplayString(Fq);
         var className = $"{PicoAopNames.InterceptedPrefix}{safeSvcName}_{intSuffix}";
 
         var wrapperParams = string.Join(

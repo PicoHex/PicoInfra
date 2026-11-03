@@ -2,520 +2,251 @@ namespace PicoAop.Gen.Emission;
 
 internal static class ProxyEmitter
 {
-    public static string EmitInterceptedClassMulti(
-        string safeSvcName,
-        INamedTypeSymbol serviceType,
-        List<ITypeSymbol> interceptorTypes
-    )
+    private static readonly SymbolDisplayFormat Fq = SymbolDisplayFormat.FullyQualifiedFormat;
+
+    /// <summary>
+    /// Emits the decorator class for one service and one interceptor chain.
+    /// Everything it declares comes from <paramref name="plan"/>, so the set of
+    /// members routed through the chain is exactly the set the invocation
+    /// structs were emitted for.
+    /// </summary>
+    public static string EmitInterceptedClass(ServicePlan plan, List<ITypeSymbol> interceptorTypes)
     {
         if (interceptorTypes.Count == 0)
             return string.Empty;
-        if (interceptorTypes.Count == 1)
-            return EmitInterceptedClass(safeSvcName, serviceType, interceptorTypes[0]);
+
+        var service = plan.Service;
+        var safeName = plan.SafeName;
+        var svcFullName = service.ToDisplayString(Fq);
+        var intSuffix = InterceptorSuffix(interceptorTypes);
+        var className = $"{PicoAopNames.InterceptedPrefix}{safeName}_{intSuffix}";
+        var isClassType = service.TypeKind == TypeKind.Class;
+        var lastStep = interceptorTypes.Count - 1;
 
         var sb = new StringBuilder();
-        var svcFullName = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var intSuffix = string.Join(
-            "_",
-            interceptorTypes.Select(t =>
-                InvocationEmitter.Sanitize(
-                    t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                )
-            )
-        );
-        var className = $"{PicoAopNames.InterceptedPrefix}{safeSvcName}_{intSuffix}";
-
         sb.AppendLine($"sealed class {className} : {svcFullName}");
         sb.AppendLine("{");
         sb.AppendLine($"    private readonly {svcFullName} _inner;");
-        for (int i = 0; i < interceptorTypes.Count; i++)
-            sb.AppendLine(
-                $"    private readonly {interceptorTypes[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} _i{i};"
-            );
+        for (var i = 0; i < interceptorTypes.Count; i++)
+            sb.AppendLine($"    private readonly {interceptorTypes[i].ToDisplayString(Fq)} _i{i};");
         sb.AppendLine();
 
-        // Constructor
-        var ctorParams = $"({svcFullName} inner";
-        for (int i = 0; i < interceptorTypes.Count; i++)
-            ctorParams +=
-                $", {interceptorTypes[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} i{i}";
-        ctorParams += ")";
+        var ctorParams =
+            $"({svcFullName} inner"
+            + string.Concat(
+                interceptorTypes.Select(
+                    (t, i) =>
+                        $", {t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} i{i}"
+                )
+            )
+            + ")";
         sb.AppendLine($"    public {className}{ctorParams}");
         sb.AppendLine("    {");
         sb.AppendLine("        _inner = inner;");
-        for (int i = 0; i < interceptorTypes.Count; i++)
+        for (var i = 0; i < interceptorTypes.Count; i++)
             sb.AppendLine($"        _i{i} = i{i};");
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        // Static delegate chain: from outermost to innermost
-        var methods = serviceType
-            .GetMembers()
-            .OfType<IMethodSymbol>()
-            .Where(m =>
-                m.MethodKind == MethodKind.Ordinary
-                && m.DeclaredAccessibility == Accessibility.Public
-                && !m.IsStatic
-            );
-
-        foreach (var method in methods.Where(m => m.Parameters.All(p => p.RefKind == RefKind.None)))
+        // Static delegate chains. Generic members keep theirs inside the
+        // invocation struct instead: their delegates mention the method's type
+        // parameters, which do not exist at class scope.
+        var emittedChains = false;
+        foreach (var member in plan.Members.Where(m => m.IsIntercepted))
         {
-            var structName = InvocationEmitter.BuildStructName(safeSvcName, method);
-            var multiStructName = $"{structName}_{intSuffix}";
-            var hasReturn = method.ReturnType.SpecialType != SpecialType.System_Void;
-            var isAsync =
-                method.ReturnType is INamedTypeSymbol
-                {
-                    MetadataName: "Task`1" or "ValueTask`1" or "Task" or "ValueTask"
-                };
-
-            // Step0: calls InvokeTarget (the actual target method)
-            if (isAsync)
+            if (member.Method is { } method)
             {
-                var namedRet = method.ReturnType as INamedTypeSymbol;
-                var metaName = namedRet?.MetadataName;
-                var isTaskOf = metaName is "Task`1";
-                var isValueTaskOf = metaName is "ValueTask`1";
-                var isTask = metaName is "Task";
-                var isValueTask = metaName is "ValueTask";
-                var hasAsyncReturn = isTaskOf || isValueTaskOf;
-
-                var retType =
-                    (isValueTask || isValueTaskOf)
-                        ? namedRet!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                        : (
-                            namedRet?.TypeArguments.Length > 0
-                                ? $"ValueTask<{namedRet.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
-                                : "ValueTask"
-                        );
-                sb.AppendLine(
-                    $"    private static readonly Func<{multiStructName}, {retType}> s_{method.Name}_Step0 = static inv => inv.InvokeTargetAsync();"
-                );
-                for (int step = 1; step < interceptorTypes.Count; step++)
-                {
-                    int interceptorIdx = interceptorTypes.Count - step;
-                    var invokeMethod = hasAsyncReturn ? "InvokeAsync" : "InvokeAsyncVoid";
-                    sb.AppendLine(
-                        $"    private static readonly Func<{multiStructName}, {retType}> s_{method.Name}_Step{step} = static inv => inv._i{interceptorIdx}.{invokeMethod}(inv, s_{method.Name}_Step{step - 1});"
-                    );
-                }
+                if (method.TypeParameters.Length > 0)
+                    continue;
+                var invocationType =
+                    $"{InvocationEmitter.BuildStructName(safeName, method)}_{intSuffix}";
+                foreach (
+                    var line in EmitMethodChainFields(
+                        method,
+                        invocationType,
+                        $"s_{InvocationEmitter.BuildDelegateBase(method)}",
+                        interceptorTypes.Count,
+                        "private"
+                    )
+                )
+                    sb.AppendLine(line);
+                emittedChains = true;
             }
-            else if (hasReturn)
+            else if (member.Property is { } property)
             {
-                var retType = method.ReturnType.ToDisplayString(
-                    SymbolDisplayFormat.FullyQualifiedFormat
-                );
-                sb.AppendLine(
-                    $"    private static readonly Func<{multiStructName}, {retType}> s_{method.Name}_Step0 = static inv => inv.InvokeTarget();"
-                );
-                for (int step = 1; step < interceptorTypes.Count; step++)
-                {
-                    int interceptorIdx = interceptorTypes.Count - step;
-                    sb.AppendLine(
-                        $"    private static readonly Func<{multiStructName}, {retType}> s_{method.Name}_Step{step} = static inv => inv._i{interceptorIdx}.Invoke(inv, s_{method.Name}_Step{step - 1});"
-                    );
-                }
-            }
-            else
-            {
-                sb.AppendLine(
-                    $"    private static readonly Func<{multiStructName}, object?> s_{method.Name}_Step0 = static inv => {{ inv.InvokeTarget(); return null; }};"
-                );
-                for (int step = 1; step < interceptorTypes.Count; step++)
-                {
-                    int interceptorIdx = interceptorTypes.Count - step;
-                    sb.AppendLine(
-                        $"    private static readonly Func<{multiStructName}, object?> s_{method.Name}_Step{step} = static inv => {{ inv._i{interceptorIdx}.InvokeVoid(inv, s_{method.Name}_Step{step - 1}); return null; }};"
-                    );
-                }
+                foreach (
+                    var line in EmitPropertyChainFields(
+                        safeName,
+                        property,
+                        intSuffix,
+                        interceptorTypes
+                    )
+                )
+                    sb.AppendLine(line);
+                emittedChains = true;
             }
         }
-        sb.AppendLine();
+        if (emittedChains)
+            sb.AppendLine();
 
-        // Property delegate caches
-        var svcFullName2 = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        foreach (
-            var prop in serviceType
-                .GetMembers()
-                .OfType<IPropertySymbol>()
-                .Where(p =>
-                    !p.IsIndexer && !p.IsStatic && p.DeclaredAccessibility == Accessibility.Public
-                )
-        )
+        foreach (var member in plan.Members)
         {
-            var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-            var getterStructName = $"Invocation_{safeSvcName}_{prop.Name}_Getter_{intSuffix}";
-            var setterStructName = $"Invocation_{safeSvcName}_{prop.Name}_Setter_{intSuffix}";
-
-            if (prop.GetMethod?.DeclaredAccessibility == Accessibility.Public)
+            switch (member.Kind)
             {
-                // Getter Step0
-                sb.AppendLine(
-                    $"    private static readonly Func<{getterStructName}, {propType}> s_get_{prop.Name}_Step0 = static inv => inv.InvokeTarget();"
-                );
-                // Getter Step1..StepN-1
-                for (int step = 1; step < interceptorTypes.Count; step++)
-                {
-                    int interceptorIdx = interceptorTypes.Count - step;
-                    sb.AppendLine(
-                        $"    private static readonly Func<{getterStructName}, {propType}> s_get_{prop.Name}_Step{step} = static inv => inv._i{interceptorIdx}.Invoke(inv, s_get_{prop.Name}_Step{step - 1});"
-                    );
-                }
-            }
-
-            if (
-                prop.SetMethod?.DeclaredAccessibility == Accessibility.Public
-                && !prop.SetMethod.IsInitOnly
-            )
-            {
-                // Setter Step0
-                sb.AppendLine(
-                    $"    private static readonly Func<{setterStructName}, object?> s_set_{prop.Name}_Step0 = static inv => {{ inv.InvokeTarget(); return null; }};"
-                );
-                // Setter Step1..StepN-1
-                for (int step = 1; step < interceptorTypes.Count; step++)
-                {
-                    int interceptorIdx = interceptorTypes.Count - step;
-                    sb.AppendLine(
-                        $"    private static readonly Func<{setterStructName}, object?> s_set_{prop.Name}_Step{step} = static inv => {{ inv._i{interceptorIdx}.InvokeVoid(inv, s_set_{prop.Name}_Step{step - 1}); return null; }};"
-                    );
-                }
+                case PlannedMemberKind.Method:
+                    EmitMethod(sb, plan, member, interceptorTypes, intSuffix, isClassType);
+                    break;
+                case PlannedMemberKind.Property:
+                    EmitProperty(sb, plan, member, interceptorTypes, intSuffix, isClassType);
+                    break;
+                case PlannedMemberKind.Indexer:
+                    EmitIndexer(sb, member, isClassType);
+                    break;
+                case PlannedMemberKind.Event:
+                    EmitEvent(sb, member, isClassType);
+                    break;
             }
         }
-        sb.AppendLine();
-
-        var isClassType = serviceType.TypeKind == TypeKind.Class;
-        // Method overrides
-        foreach (var method in methods)
-            EmitMultiMethodOverride(
-                sb,
-                safeSvcName,
-                method,
-                svcFullName,
-                interceptorTypes,
-                intSuffix,
-                isClassType
-            );
-
-        // Properties
-        foreach (
-            var prop in serviceType
-                .GetMembers()
-                .OfType<IPropertySymbol>()
-                .Where(p =>
-                    !p.IsIndexer && !p.IsStatic && p.DeclaredAccessibility == Accessibility.Public
-                )
-        )
-            EmitMultiProperty(sb, safeSvcName, prop, svcFullName, interceptorTypes, intSuffix);
 
         sb.AppendLine("}");
         return sb.ToString();
     }
 
-    private static void EmitMultiMethodOverride(
-        StringBuilder sb,
-        string safeSvcName,
+    /// <summary>
+    /// The interceptor chain for one method, as static <c>Func</c> fields:
+    /// <c>Step0</c> calls the target, every further step wraps the previous one
+    /// in one interceptor, outer-most last.
+    /// </summary>
+    public static IEnumerable<string> EmitMethodChainFields(
         IMethodSymbol method,
-        string svcFullName,
+        string invocationType,
+        string fieldNamePrefix,
+        int interceptorCount,
+        string accessibility
+    )
+    {
+        var shape = ShapeFor(method);
+        var target =
+            $"    {accessibility} static readonly Func<{invocationType}, {shape.DelegateResultType}>";
+
+        yield return $"{target} {fieldNamePrefix}_Step0 = static inv => {StepBody(shape, $"inv.{shape.TargetCall}()")};";
+
+        for (var step = 1; step < interceptorCount; step++)
+        {
+            var interceptorIndex = interceptorCount - step;
+            yield return $"{target} {fieldNamePrefix}_Step{step} = static inv => {StepBody(shape, $"inv._i{interceptorIndex}.{shape.InterceptorMethod}(inv, {fieldNamePrefix}_Step{step - 1})")};";
+        }
+    }
+
+    private static IEnumerable<string> EmitPropertyChainFields(
+        string safeName,
+        IPropertySymbol property,
+        string intSuffix,
+        List<ITypeSymbol> interceptorTypes
+    )
+    {
+        var propType = property.Type.ToDisplayString(Fq);
+        var lastStep = interceptorTypes.Count - 1;
+
+        if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
+        {
+            var getter = $"Invocation_{safeName}_{property.Name}_Getter_{intSuffix}";
+            yield return $"    private static readonly Func<{getter}, {propType}> s_get_{property.Name}_Step0 = static inv => inv.InvokeTarget();";
+            for (var step = 1; step <= lastStep; step++)
+            {
+                var interceptorIndex = interceptorTypes.Count - step;
+                yield return $"    private static readonly Func<{getter}, {propType}> s_get_{property.Name}_Step{step} = static inv => inv._i{interceptorIndex}.Invoke(inv, s_get_{property.Name}_Step{step - 1});";
+            }
+        }
+
+        if (IsWritable(property))
+        {
+            var setter = $"Invocation_{safeName}_{property.Name}_Setter_{intSuffix}";
+            yield return $"    private static readonly Func<{setter}, object?> s_set_{property.Name}_Step0 = static inv => {{ inv.InvokeTarget(); return null; }};";
+            for (var step = 1; step <= lastStep; step++)
+            {
+                var interceptorIndex = interceptorTypes.Count - step;
+                yield return $"    private static readonly Func<{setter}, object?> s_set_{property.Name}_Step{step} = static inv => {{ inv._i{interceptorIndex}.InvokeVoid(inv, s_set_{property.Name}_Step{step - 1}); return null; }};";
+            }
+        }
+    }
+
+    private static void EmitMethod(
+        StringBuilder sb,
+        ServicePlan plan,
+        PlannedMember member,
         List<ITypeSymbol> interceptorTypes,
         string intSuffix,
         bool isClassType
     )
     {
-        var retType = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var paramDecl = string.Join(
-            ", ",
-            method.Parameters.Select(p =>
-                $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {p.Name}"
-            )
+        var method = member.Method!;
+        var typeParameters = InvocationEmitter.TypeParameterList(method);
+        var constraints = InvocationEmitter.ConstraintClauses(method);
+        var refPrefix =
+            method.ReturnsByRef ? "ref "
+            : method.ReturnsByRefReadonly ? "ref readonly "
+            : string.Empty;
+        var retType = method.ReturnType.ToDisplayString(Fq);
+        var paramDecl = string.Join(", ", method.Parameters.Select(ParameterDeclaration));
+        var paramArgs = string.Join(", ", method.Parameters.Select(ParameterArgument));
+        var modifier = Modifier(
+            method.IsVirtual,
+            method.IsOverride,
+            method.IsAbstract,
+            isClassType
         );
-        var paramArgs = string.Join(", ", method.Parameters.Select(p => p.Name));
-        var structName = InvocationEmitter.BuildStructName(safeSvcName, method);
-        var multiStructName = $"{structName}_{intSuffix}";
-        var hasRefOut = method.Parameters.Any(p => p.RefKind != RefKind.None);
 
-        // For class types with virtual/override/abstract methods, use 'public override'
-        // so virtual dispatch routes through the proxy. Interface types don't need 'override'.
-        var modifier =
-            (isClassType && (method.IsVirtual || method.IsOverride || method.IsAbstract))
-                ? "public override"
-                : "public";
-        sb.AppendLine($"    {modifier} {retType} {method.Name}({paramDecl})");
+        sb.AppendLine(
+            $"    {modifier} {refPrefix}{retType} {method.Name}{typeParameters}({paramDecl}){constraints}"
+        );
         sb.AppendLine("    {");
 
-        if (hasRefOut)
+        if (!member.IsIntercepted)
         {
-            sb.AppendLine($"        return _inner.{method.Name}({paramArgs});");
+            var call = $"_inner.{method.Name}{typeParameters}({paramArgs})";
+            if (refPrefix.Length > 0)
+                sb.AppendLine($"        return ref {call};");
+            else if (method.ReturnType.SpecialType == SpecialType.System_Void)
+                sb.AppendLine($"        {call};");
+            else
+                sb.AppendLine($"        return {call};");
         }
         else
         {
-            var ctorArgs = $"_inner{string.Concat(interceptorTypes.Select((_, i) => $", _i{i}"))}";
-            if (method.Parameters.Length > 0)
-                ctorArgs += ", " + paramArgs;
+            var structName =
+                $"{InvocationEmitter.BuildStructName(plan.SafeName, method)}_{intSuffix}";
+            var structType = $"{structName}{typeParameters}";
+            var ctorArgs =
+                $"_inner{string.Concat(interceptorTypes.Select((_, i) => $", _i{i}"))}"
+                + (method.Parameters.Length > 0 ? ", " + paramArgs : string.Empty);
+            var next =
+                method.TypeParameters.Length > 0
+                    ? $"{structType}.s_Step{interceptorTypes.Count - 1}"
+                    : $"s_{InvocationEmitter.BuildDelegateBase(method)}_Step{interceptorTypes.Count - 1}";
+            var shape = ShapeFor(method);
 
-            var retNamed = method.ReturnType as INamedTypeSymbol;
-            var metaName = retNamed?.MetadataName;
-            var isTaskOf = metaName is "Task`1";
-            var isValueTaskOf = metaName is "ValueTask`1";
-            var isTask = metaName is "Task";
-            var isValueTask = metaName is "ValueTask";
-
-            sb.AppendLine($"        var inv = new {multiStructName}({ctorArgs});");
-
-            var structType = multiStructName;
-            var lastStep = interceptorTypes.Count - 1;
-            var nextDelegate = $"s_{method.Name}_Step{lastStep}";
-
-            if (isTaskOf || isValueTaskOf)
+            sb.AppendLine($"        var inv = new {structType}({ctorArgs});");
+            switch (shape.InterceptorMethod)
             {
-                var unwrappedType = method.ReturnType
-                    is INamedTypeSymbol { TypeArguments.Length: > 0 } namedRet
-                    ? namedRet
-                        .TypeArguments[0]
-                        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-                    : "object";
-                sb.AppendLine(
-                    $"        return _i0.InvokeAsync<{structType}, {unwrappedType}>(inv, {nextDelegate}){(isTaskOf ? ".AsTask()" : "")};"
-                );
-            }
-            else if (isTask)
-            {
-                sb.AppendLine(
-                    $"        return _i0.InvokeAsyncVoid<{structType}>(inv, {nextDelegate}).AsTask();"
-                );
-            }
-            else if (isValueTask)
-            {
-                sb.AppendLine(
-                    $"        return _i0.InvokeAsyncVoid<{structType}>(inv, {nextDelegate});"
-                );
-            }
-            else if (method.ReturnType.SpecialType == SpecialType.System_Void)
-                sb.AppendLine($"        _i0.InvokeVoid(inv, {nextDelegate});");
-            else
-            {
-                var retTypeName = method.ReturnType.ToDisplayString(
-                    SymbolDisplayFormat.FullyQualifiedFormat
-                );
-                sb.AppendLine(
-                    $"        return _i0.Invoke<{structType}, {retTypeName}>(inv, {nextDelegate});"
-                );
-            }
-        }
-
-        sb.AppendLine("    }");
-        sb.AppendLine();
-    }
-
-    private static void EmitMultiProperty(
-        StringBuilder sb,
-        string safeSvcName,
-        IPropertySymbol prop,
-        string svcFullName,
-        List<ITypeSymbol> interceptorTypes,
-        string intSuffix
-    )
-    {
-        var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        sb.AppendLine($"    public {propType} {prop.Name}");
-        sb.AppendLine("    {");
-
-        if (prop.GetMethod?.DeclaredAccessibility == Accessibility.Public)
-        {
-            sb.AppendLine("        get");
-            sb.AppendLine("        {");
-            sb.AppendLine(
-                $"            var inv = new Invocation_{safeSvcName}_{prop.Name}_Getter_{intSuffix}(_inner, {string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"))});"
-            );
-            var getterLastStep = interceptorTypes.Count - 1;
-            sb.AppendLine(
-                $"            return _i0.Invoke(inv, s_get_{prop.Name}_Step{getterLastStep});"
-            );
-            sb.AppendLine("        }");
-        }
-
-        if (
-            prop.SetMethod?.DeclaredAccessibility == Accessibility.Public
-            && !prop.SetMethod.IsInitOnly
-        )
-        {
-            sb.AppendLine("        set");
-            sb.AppendLine("        {");
-            sb.AppendLine(
-                $"            var inv = new Invocation_{safeSvcName}_{prop.Name}_Setter_{intSuffix}(_inner, {string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"))}, value);"
-            );
-            var setterLastStep = interceptorTypes.Count - 1;
-            sb.AppendLine(
-                $"            _i0.InvokeVoid(inv, s_set_{prop.Name}_Step{setterLastStep});"
-            );
-            sb.AppendLine("        }");
-        }
-
-        sb.AppendLine("    }");
-        sb.AppendLine();
-    }
-
-    public static string EmitInterceptedClass(
-        string safeSvcName,
-        INamedTypeSymbol serviceType,
-        ITypeSymbol interceptorType
-    )
-    {
-        var sb = new StringBuilder();
-        var svcFullName = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var intFullName = interceptorType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var intSuffix = InvocationEmitter.Sanitize(
-            interceptorType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-        );
-        var className = $"{PicoAopNames.InterceptedPrefix}{safeSvcName}_{intSuffix}";
-
-        sb.AppendLine($"sealed class {className} : {svcFullName}");
-        sb.AppendLine("{");
-        sb.AppendLine($"    private readonly {svcFullName} _inner;");
-        sb.AppendLine($"    private readonly {intFullName} _i0;");
-        // Static delegate cache — one per method
-        foreach (
-            var method in serviceType
-                .GetMembers()
-                .OfType<IMethodSymbol>()
-                .Where(m =>
-                    m.MethodKind == MethodKind.Ordinary
-                    && m.DeclaredAccessibility == Accessibility.Public
-                    && !m.IsStatic
-                    && m.Parameters.All(p => p.RefKind == RefKind.None)
-                )
-        )
-        {
-            var delCache = EmitStaticDelegateCache(safeSvcName, method, interceptorType);
-            foreach (var line in delCache.Split('\n'))
-                sb.AppendLine(line);
-        }
-        sb.AppendLine();
-
-        // Constructor
-        sb.AppendLine($"    public {className}({svcFullName} inner, {intFullName} i0)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        _inner = inner;");
-        sb.AppendLine("        _i0 = i0;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-
-        // Methods
-        var isClassType = serviceType.TypeKind == TypeKind.Class;
-        var methods = serviceType
-            .GetMembers()
-            .OfType<IMethodSymbol>()
-            .Where(m =>
-                m.MethodKind == MethodKind.Ordinary
-                && m.DeclaredAccessibility == Accessibility.Public
-                && !m.IsStatic
-            );
-
-        foreach (var method in methods)
-            EmitMethodOverride(
-                sb,
-                safeSvcName,
-                method,
-                svcFullName,
-                intFullName,
-                interceptorType,
-                isClassType
-            );
-
-        // Properties
-        foreach (
-            var prop in serviceType
-                .GetMembers()
-                .OfType<IPropertySymbol>()
-                .Where(p =>
-                    !p.IsIndexer && !p.IsStatic && p.DeclaredAccessibility == Accessibility.Public
-                )
-        )
-            EmitProperty(sb, safeSvcName, prop, svcFullName, intFullName, interceptorType);
-
-        sb.AppendLine("}");
-        return sb.ToString();
-    }
-
-    private static void EmitMethodOverride(
-        StringBuilder sb,
-        string safeSvcName,
-        IMethodSymbol method,
-        string svcFullName,
-        string intFullName,
-        ITypeSymbol? interceptorType,
-        bool isClassType
-    )
-    {
-        var retType = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var paramDecl = string.Join(
-            ", ",
-            method.Parameters.Select(p =>
-                $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {p.Name}"
-            )
-        );
-        var paramArgs = string.Join(", ", method.Parameters.Select(p => p.Name));
-        var structName = InvocationEmitter.BuildStructName(safeSvcName, method, interceptorType);
-        var hasRefOut = method.Parameters.Any(p => p.RefKind != RefKind.None);
-
-        // For class types with virtual/override/abstract methods, use 'public override'
-        var modifier =
-            (isClassType && (method.IsVirtual || method.IsOverride || method.IsAbstract))
-                ? "public override"
-                : "public";
-        sb.AppendLine($"    {modifier} {retType} {method.Name}({paramDecl})");
-        sb.AppendLine("    {");
-
-        if (hasRefOut)
-        {
-            sb.AppendLine($"        return _inner.{method.Name}({paramArgs});");
-        }
-        else
-        {
-            var retNamed = method.ReturnType as INamedTypeSymbol;
-            var metaName = retNamed?.MetadataName;
-            var isTaskOf = metaName is "Task`1";
-            var isValueTaskOf = metaName is "ValueTask`1";
-            var isTask = metaName is "Task";
-            var isValueTask = metaName is "ValueTask";
-            var isAsync = isTaskOf || isValueTaskOf || isTask || isValueTask;
-
-            if (isAsync)
-            {
-                sb.AppendLine(
-                    $"        var inv = new {structName}(_inner, _i0{(method.Parameters.Length > 0 ? ", " + paramArgs : "")});"
-                );
-
-                if (isTaskOf || isTask)
-                {
-                    // Task<T> or Task: convert ValueTask → Task via .AsTask()
-                    var invokeMethod = isTaskOf ? "InvokeAsync" : "InvokeAsyncVoid";
+                case "Invoke":
                     sb.AppendLine(
-                        $"        return _i0.{invokeMethod}(inv, static i => (({structName})i).InvokeTargetAsync()).AsTask();"
+                        $"        return _i0.Invoke<{structType}, {shape.ExplicitResultType}>(inv, {next});"
                     );
-                }
-                else
-                {
-                    // ValueTask<T> or ValueTask: return directly
-                    var invokeMethod = isValueTaskOf ? "InvokeAsync" : "InvokeAsyncVoid";
+                    break;
+                case "InvokeAsync":
                     sb.AppendLine(
-                        $"        return _i0.{invokeMethod}(inv, static i => (({structName})i).InvokeTargetAsync());"
+                        $"        return _i0.InvokeAsync<{structType}, {shape.ExplicitResultType}>(inv, {next}){(shape.AsTask ? ".AsTask()" : string.Empty)};"
                     );
-                }
-            }
-            else if (method.ReturnType.SpecialType == SpecialType.System_Void)
-            {
-                sb.AppendLine(
-                    $"        var inv = new {structName}(_inner, _i0{(method.Parameters.Length > 0 ? ", " + paramArgs : "")});"
-                );
-                sb.AppendLine($"        _i0.InvokeVoid(inv, s_{method.Name}Next);");
-            }
-            else
-            {
-                sb.AppendLine(
-                    $"        var inv = new {structName}(_inner, _i0{(method.Parameters.Length > 0 ? ", " + paramArgs : "")});"
-                );
-                sb.AppendLine($"        return _i0.Invoke(inv, s_{method.Name}Next);");
+                    break;
+                case "InvokeAsyncVoid":
+                    sb.AppendLine(
+                        $"        return _i0.InvokeAsyncVoid<{structType}>(inv, {next}){(shape.AsTask ? ".AsTask()" : string.Empty)};"
+                    );
+                    break;
+                default:
+                    sb.AppendLine($"        _i0.InvokeVoid(inv, {next});");
+                    break;
             }
         }
 
@@ -525,44 +256,64 @@ internal static class ProxyEmitter
 
     private static void EmitProperty(
         StringBuilder sb,
-        string safeSvcName,
-        IPropertySymbol prop,
-        string svcFullName,
-        string intFullName,
-        ITypeSymbol? interceptorType
+        ServicePlan plan,
+        PlannedMember member,
+        List<ITypeSymbol> interceptorTypes,
+        string intSuffix,
+        bool isClassType
     )
     {
-        var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var intSuffix =
-            interceptorType != null
-                ? $"_{InvocationEmitter.Sanitize(
-                interceptorType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))}"
-                : "";
-        sb.AppendLine($"    public {propType} {prop.Name}");
+        var property = member.Property!;
+        var propType = property.Type.ToDisplayString(Fq);
+        var modifier = Modifier(
+            property.IsVirtual,
+            property.IsOverride,
+            property.IsAbstract,
+            isClassType
+        );
+        var lastStep = interceptorTypes.Count - 1;
+        var interceptorArgs = string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"));
+
+        sb.AppendLine($"    {modifier} {propType} {property.Name}");
         sb.AppendLine("    {");
 
-        if (prop.GetMethod?.DeclaredAccessibility == Accessibility.Public)
+        if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
         {
             sb.AppendLine("        get");
             sb.AppendLine("        {");
-            sb.AppendLine(
-                $"            var inv = new Invocation_{safeSvcName}_{prop.Name}_Getter{intSuffix}(_inner, _i0);"
-            );
-            sb.AppendLine($"            return _i0.Invoke(inv, s_get_{prop.Name}Next);");
+            if (member.IsIntercepted)
+            {
+                sb.AppendLine(
+                    $"            var inv = new Invocation_{plan.SafeName}_{property.Name}_Getter_{intSuffix}(_inner, {interceptorArgs});"
+                );
+                sb.AppendLine(
+                    $"            return _i0.Invoke(inv, s_get_{property.Name}_Step{lastStep});"
+                );
+            }
+            else
+            {
+                sb.AppendLine($"            return _inner.{property.Name};");
+            }
             sb.AppendLine("        }");
         }
 
-        if (
-            prop.SetMethod?.DeclaredAccessibility == Accessibility.Public
-            && !prop.SetMethod.IsInitOnly
-        )
+        if (IsWritable(property))
         {
             sb.AppendLine("        set");
             sb.AppendLine("        {");
-            sb.AppendLine(
-                $"            var inv = new Invocation_{safeSvcName}_{prop.Name}_Setter{intSuffix}(_inner, _i0, value);"
-            );
-            sb.AppendLine($"            _i0.InvokeVoid(inv, s_set_{prop.Name}Next);");
+            if (member.IsIntercepted)
+            {
+                sb.AppendLine(
+                    $"            var inv = new Invocation_{plan.SafeName}_{property.Name}_Setter_{intSuffix}(_inner, {interceptorArgs}, value);"
+                );
+                sb.AppendLine(
+                    $"            _i0.InvokeVoid(inv, s_set_{property.Name}_Step{lastStep});"
+                );
+            }
+            else
+            {
+                sb.AppendLine($"            _inner.{property.Name} = value;");
+            }
             sb.AppendLine("        }");
         }
 
@@ -570,47 +321,137 @@ internal static class ProxyEmitter
         sb.AppendLine();
     }
 
-    public static string EmitStaticDelegateCache(
-        string safeSvcName,
-        IMethodSymbol method,
-        ITypeSymbol? interceptorType = null
-    )
+    private static void EmitIndexer(StringBuilder sb, PlannedMember member, bool isClassType)
     {
-        var structName = InvocationEmitter.BuildStructName(safeSvcName, method, interceptorType);
-        var isAsync =
-            method.ReturnType is INamedTypeSymbol
-            {
-                MetadataName: "Task`1" or "ValueTask`1" or "Task" or "ValueTask"
-            };
+        var indexer = member.Property!;
+        var propType = indexer.Type.ToDisplayString(Fq);
+        var modifier = Modifier(
+            indexer.IsVirtual,
+            indexer.IsOverride,
+            indexer.IsAbstract,
+            isClassType
+        );
+        var paramDecl = string.Join(", ", indexer.Parameters.Select(ParameterDeclaration));
+        var paramArgs = string.Join(", ", indexer.Parameters.Select(ParameterArgument));
 
-        if (isAsync)
+        sb.AppendLine($"    {modifier} {propType} this[{paramDecl}]");
+        sb.AppendLine("    {");
+        if (indexer.GetMethod?.DeclaredAccessibility == Accessibility.Public)
+            sb.AppendLine($"        get => _inner[{paramArgs}];");
+        if (IsWritable(indexer))
+            sb.AppendLine($"        set => _inner[{paramArgs}] = value;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static void EmitEvent(StringBuilder sb, PlannedMember member, bool isClassType)
+    {
+        var @event = member.Event!;
+        var eventType = @event.Type.ToDisplayString(Fq);
+        var modifier = Modifier(
+            @event.IsVirtual,
+            @event.IsOverride,
+            @event.IsAbstract,
+            isClassType
+        );
+
+        sb.AppendLine($"    {modifier} event {eventType} {@event.Name}");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        add => _inner.{@event.Name} += value;");
+        sb.AppendLine($"        remove => _inner.{@event.Name} -= value;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+    }
+
+    private static string Modifier(
+        bool isVirtual,
+        bool isOverride,
+        bool isAbstract,
+        bool isClassType
+    ) => isClassType && (isVirtual || isOverride || isAbstract) ? "public override" : "public";
+
+    private static bool IsWritable(IPropertySymbol property) =>
+        property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
+
+    private static string ParameterDeclaration(IParameterSymbol parameter) =>
+        $"{RefPrefix(parameter.RefKind)}{parameter.Type.ToDisplayString(Fq)} {parameter.Name}";
+
+    private static string ParameterArgument(IParameterSymbol parameter) =>
+        $"{RefPrefix(parameter.RefKind)}{parameter.Name}";
+
+    private static string RefPrefix(RefKind refKind) =>
+        refKind switch
         {
-            var namedRet = method.ReturnType as INamedTypeSymbol;
-            var isOrigValueTask = namedRet?.MetadataName is "ValueTask" or "ValueTask`1";
-            if (isOrigValueTask)
-            {
-                // ValueTask<T>: InvokeTargetAsync() returns ValueTask<T> directly
-                var retType = namedRet!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                return $"    private static readonly Func<{structName}, {retType}> s_{method.Name}Next = static inv => inv.InvokeTargetAsync();";
-            }
-            else
-            {
-                // Task<T>: InvokeTargetAsync() returns ValueTask<T> (wrapped)
-                var unwrapped =
-                    namedRet?.TypeArguments.Length > 0
-                        ? $"<{namedRet!.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
-                        : "";
-                var retType = $"ValueTask{unwrapped}";
-                return $"    private static readonly Func<{structName}, {retType}> s_{method.Name}Next = static inv => inv.InvokeTargetAsync();";
-            }
+            RefKind.Ref => "ref ",
+            RefKind.Out => "out ",
+            RefKind.In => "in ",
+            RefKind.RefReadOnlyParameter => "ref readonly ",
+            _ => string.Empty,
+        };
+
+    private static string InterceptorSuffix(List<ITypeSymbol> interceptorTypes) =>
+        string.Join(
+            "_",
+            interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
+        );
+
+    private static string StepBody(ChainShape shape, string body) =>
+        shape.WrapsVoid ? $"{{ {body}; return null; }}" : body;
+
+    /// <summary>
+    /// How one method's return type maps onto the interceptor API: which
+    /// <c>IInterceptor</c> method carries the chain, what the cached
+    /// <c>Func</c> returns, and whether a <c>Task</c> has to be rebuilt on the
+    /// way out.
+    /// </summary>
+    private static ChainShape ShapeFor(IMethodSymbol method)
+    {
+        var returnType = method.ReturnType as INamedTypeSymbol;
+        var metadataName = returnType?.MetadataName;
+
+        if (metadataName is "Task`1" or "ValueTask`1")
+        {
+            var inner = returnType!
+                .TypeArguments[0]
+                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            return new ChainShape(
+                $"ValueTask<{inner}>",
+                inner,
+                "InvokeAsync",
+                metadataName is "Task`1",
+                "InvokeTargetAsync"
+            );
         }
 
-        if (method.ReturnType.SpecialType == SpecialType.System_Void)
-            return $"    private static readonly Func<{structName}, object?> s_{method.Name}Next = static inv => {{ inv.InvokeTarget(); return null; }};";
+        if (metadataName is "Task" or "ValueTask")
+            return new ChainShape(
+                "ValueTask",
+                null,
+                "InvokeAsyncVoid",
+                metadataName is "Task",
+                "InvokeTargetAsync"
+            );
 
-        var syncRetType = method.ReturnType.ToDisplayString(
-            SymbolDisplayFormat.FullyQualifiedFormat
-        );
-        return $"    private static readonly Func<{structName}, {syncRetType}> s_{method.Name}Next = static inv => inv.InvokeTarget();";
+        if (method.ReturnType.SpecialType == SpecialType.System_Void)
+            return new ChainShape("object?", null, "InvokeVoid", false, "InvokeTarget");
+
+        var sync = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return new ChainShape(sync, sync, "Invoke", false, "InvokeTarget");
+    }
+
+    private readonly struct ChainShape(
+        string delegateResultType,
+        string? explicitResultType,
+        string interceptorMethod,
+        bool asTask,
+        string targetCall
+    )
+    {
+        public string DelegateResultType { get; } = delegateResultType;
+        public string? ExplicitResultType { get; } = explicitResultType;
+        public string InterceptorMethod { get; } = interceptorMethod;
+        public bool AsTask { get; } = asTask;
+        public string TargetCall { get; } = targetCall;
+        public bool WrapsVoid => InterceptorMethod == "InvokeVoid";
     }
 }
