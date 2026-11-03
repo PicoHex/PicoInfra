@@ -112,26 +112,38 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
 
     private static void WriteJsonEntry(IBufferWriter<byte> writer, LogEntry entry)
     {
+        // NOT `using var`: the two dynamic-key loops further down still hand the writer to the
+        // ref-taking helper below, and `ref` of a `using`-declared local is CS1657 (a using
+        // variable is readonly). The scope hook `using` would run is therefore run by hand at the
+        // end of this method, so the bytes no longer depend on the implicit "closing the
+        // outermost container commits" inside WriteEndObject.
         var jw = new JsonWriter(writer);
         jw.WriteStartObject();
 
-        WriteProperty(ref jw, "Timestamp", entry.Timestamp.ToString("O"));
-        WriteProperty(ref jw, "Level", entry.Level.ToString());
+        // The literal names go through the fused Write*Property overloads: one call that cannot be
+        // split between the name and the value, so the span-cache-copy bug the ref helper exists
+        // to dodge cannot be reintroduced here by a future edit. The fused call delegates to the
+        // two-call form, so the bytes are identical: same separator, same escaping, same values.
+        // Every one of these nine is a string on the wire; the family's integer/bool/null
+        // overloads stay unused because changing a member's JSON type is a format change, not a
+        // refactor.
+        jw.WriteStringProperty("Timestamp"u8, entry.Timestamp.ToString("O"));
+        jw.WriteStringProperty("Level"u8, entry.Level.ToString());
         if (entry.Category is not null)
-            WriteProperty(ref jw, "Category", entry.Category);
+            jw.WriteStringProperty("Category"u8, entry.Category);
         if (entry.Message is not null)
-            WriteProperty(ref jw, "Message", entry.Message);
+            jw.WriteStringProperty("Message"u8, entry.Message);
         if (entry.MessageTemplate is not null)
-            WriteProperty(ref jw, "MessageTemplate", entry.MessageTemplate);
+            jw.WriteStringProperty("MessageTemplate"u8, entry.MessageTemplate);
         if (entry.EventId != default && entry.EventId.Name is not null)
-            WriteProperty(ref jw, "EventId", entry.EventId.Name);
+            jw.WriteStringProperty("EventId"u8, entry.EventId.Name);
 
         if (entry.Exception is not null)
         {
-            WriteProperty(ref jw, "ExceptionType", entry.Exception.GetType().FullName!);
-            WriteProperty(ref jw, "Exception", entry.Exception.Message);
+            jw.WriteStringProperty("ExceptionType"u8, entry.Exception.GetType().FullName!);
+            jw.WriteStringProperty("Exception"u8, entry.Exception.Message);
             if (entry.Exception.StackTrace is not null)
-                WriteProperty(ref jw, "StackTrace", entry.Exception.StackTrace);
+                jw.WriteStringProperty("StackTrace"u8, entry.Exception.StackTrace);
         }
 
         if (entry.Properties is { Count: > 0 })
@@ -153,6 +165,13 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
         }
 
         jw.WriteEndObject();
+
+        // Explicit commit on the non-`using` path. WriteEndObject flushes only when depth reaches
+        // 0, which glued "the document is complete" to "the bytes reached the buffer" through a
+        // side effect; Dispose() is the same hook `using` would run (Flush, idempotent, never
+        // throws), so the tail is handed over once, on purpose, and stays handed over if anyone
+        // ever appends a member below this line.
+        jw.Dispose();
     }
 
     // Values are stringified for JSON, so the format has to be culture-stable: object.ToString()
@@ -171,6 +190,19 @@ public sealed class JsonLogSink : ILogSink, IFlushableLogSink
     // JSON, commas lost with the copy's comma state), and the new span cache in 2026.11+ keeps
     // them in the copy entirely, so the line became `{}`. The test that should have caught it
     // asserted Contains() instead of parsing the line; JsonLogSinkTests now parses it.
+    //
+    // KEPT for exactly two call sites, both dynamic keys: `prop.Key` in the Properties and
+    // ScopeProperties loops. The fused Write*Property overloads take the name as
+    // `ReadOnlySpan<byte>`, so a string key would have to be encoded first — either
+    // Encoding.UTF8.GetBytes (one byte[] per property per event, the +32 B measured earlier) or
+    // a stackalloc dance at every call site. The helper hands the string to WritePropertyName,
+    // which already encodes internally into a stack buffer while a name's worst case is <= 256
+    // UTF-8 bytes, so the dynamic path stays allocation-free for ordinary keys; the nine literal
+    // names are `u8` literals and allocate nothing at all.
+    //
+    // It is also the only reason WriteJsonEntry cannot declare `using var jw`: CS1657 forbids
+    // passing a using variable by ref, which is why that method ends with an explicit
+    // jw.Dispose() instead of a scope hook.
     private static void WriteProperty(ref JsonWriter writer, string name, string? value)
     {
         writer.WritePropertyName(name);
