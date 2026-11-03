@@ -6,9 +6,10 @@ internal static class InvocationEmitter
 
     /// <summary>
     /// Display format that keeps nullable reference type annotations, so a
-    /// constraint such as <c>where T : class?</c> survives the round trip.
+    /// constraint such as <c>where T : class?</c> and a declared
+    /// <c>string?</c> survive the round trip.
     /// </summary>
-    private static readonly SymbolDisplayFormat FqWithNullability =
+    public static readonly SymbolDisplayFormat FqWithNullability =
         SymbolDisplayFormat.FullyQualifiedFormat.AddMiscellaneousOptions(
             SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier
         );
@@ -17,15 +18,31 @@ internal static class InvocationEmitter
         $"Invocation_{safeSvcName}_{method.Name}{SignatureSuffix(method)}";
 
     /// <summary>
-    /// A type as it is written into emitted source. <c>dynamic</c> is spelled
-    /// <c>object</c>: the two are one type, and the one place the spelling is
-    /// forbidden is exactly where a result type is written — a struct cannot
-    /// implement <c>IInvocation&lt;dynamic&gt;</c> (CS1966, "cannot implement a
-    /// dynamic interface"), while <c>IInvocation&lt;object&gt;</c> is the same
-    /// interface and every conversion the invocation needs still applies.
+    /// A type as it is written into emitted source, nullable annotations
+    /// included. <c>dynamic</c> is spelled <c>object</c>: the two are one type,
+    /// and the one place the spelling is forbidden is exactly where a type
+    /// argument is written — a struct cannot implement
+    /// <c>IInvocation&lt;dynamic&gt;</c> (CS1966, "cannot implement a dynamic
+    /// interface"), while <c>IInvocation&lt;object&gt;</c> is the same interface
+    /// and every conversion the invocation needs still applies.
     /// </summary>
     public static string EmittedType(ITypeSymbol type) =>
-        type.TypeKind == TypeKind.Dynamic ? "object" : type.ToDisplayString(Fq);
+        type.TypeKind == TypeKind.Dynamic ? "object" : type.ToDisplayString(FqWithNullability);
+
+    /// <summary>
+    /// A type as a <em>declaration</em> writes it: the member's own nullable
+    /// annotations, and no <c>dynamic</c> rewrite (a member may be declared
+    /// <c>dynamic</c> — only a type argument may not).
+    /// <para>
+    /// The annotations are not cosmetic here. The proxy and the invocation
+    /// structs re-declare what the service already declares, so a dropped
+    /// <c>?</c> makes the generated member say <c>string</c> where the interface
+    /// says <c>string?</c>: CS8767 (parameter), CS8766 (return type), CS8612
+    /// (event), CS8613 (<c>Task&lt;string?&gt;</c>) — all of them in a file the
+    /// consumer cannot edit (review-2026-11-02/rev-aop-4.md, defect 2).
+    /// </para>
+    /// </summary>
+    public static string Declared(ITypeSymbol type) => type.ToDisplayString(FqWithNullability);
 
     /// <summary>
     /// Parameter type names as a name fragment. Type arguments are deliberately

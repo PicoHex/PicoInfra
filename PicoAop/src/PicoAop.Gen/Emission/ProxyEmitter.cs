@@ -145,7 +145,7 @@ internal static class ProxyEmitter
         List<ITypeSymbol> interceptorTypes
     )
     {
-        var propType = property.Type.ToDisplayString(Fq);
+        var propType = InvocationEmitter.Declared(property.Type);
         var lastStep = interceptorTypes.Count - 1;
 
         if (property.GetMethod?.DeclaredAccessibility == Accessibility.Public)
@@ -189,7 +189,7 @@ internal static class ProxyEmitter
             method.ReturnsByRef ? "ref "
             : method.ReturnsByRefReadonly ? "ref readonly "
             : string.Empty;
-        var retType = method.ReturnType.ToDisplayString(Fq);
+        var retType = InvocationEmitter.Declared(method.ReturnType);
         var paramDecl = string.Join(", ", method.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", method.Parameters.Select(ParameterArgument));
         var modifier = Modifier(member, isClassType);
@@ -261,7 +261,7 @@ internal static class ProxyEmitter
     )
     {
         var property = member.Property!;
-        var propType = property.Type.ToDisplayString(Fq);
+        var propType = InvocationEmitter.Declared(property.Type);
         var modifier = Modifier(member, isClassType);
         var lastStep = interceptorTypes.Count - 1;
         var interceptorArgs = string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"));
@@ -316,7 +316,7 @@ internal static class ProxyEmitter
     private static void EmitIndexer(StringBuilder sb, PlannedMember member, bool isClassType)
     {
         var indexer = member.Property!;
-        var propType = indexer.Type.ToDisplayString(Fq);
+        var propType = InvocationEmitter.Declared(indexer.Type);
         var modifier = Modifier(member, isClassType);
         var paramDecl = string.Join(", ", indexer.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", indexer.Parameters.Select(ParameterArgument));
@@ -335,7 +335,7 @@ internal static class ProxyEmitter
     private static void EmitEvent(StringBuilder sb, PlannedMember member, bool isClassType)
     {
         var @event = member.Event!;
-        var eventType = @event.Type.ToDisplayString(Fq);
+        var eventType = InvocationEmitter.Declared(@event.Type);
         var modifier = Modifier(member, isClassType);
         var target = Inner(member);
 
@@ -406,7 +406,7 @@ internal static class ProxyEmitter
         property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };
 
     private static string ParameterDeclaration(IParameterSymbol parameter) =>
-        $"{RefPrefix(parameter.RefKind)}{parameter.Type.ToDisplayString(Fq)} {parameter.Name}";
+        $"{RefPrefix(parameter.RefKind)}{InvocationEmitter.Declared(parameter.Type)} {parameter.Name}";
 
     private static string ParameterArgument(IParameterSymbol parameter) =>
         $"{RefPrefix(parameter.RefKind)}{parameter.Name}";
@@ -443,9 +443,7 @@ internal static class ProxyEmitter
 
         if (metadataName is "Task`1" or "ValueTask`1")
         {
-            var inner = returnType!
-                .TypeArguments[0]
-                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            var inner = InvocationEmitter.EmittedType(returnType!.TypeArguments[0]);
             return new ChainShape(
                 $"ValueTask<{inner}>",
                 inner,
@@ -467,7 +465,7 @@ internal static class ProxyEmitter
         if (method.ReturnType.SpecialType == SpecialType.System_Void)
             return new ChainShape("object?", null, "InvokeVoid", false, "InvokeTarget");
 
-        var sync = method.ReturnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var sync = InvocationEmitter.EmittedType(method.ReturnType);
         return new ChainShape(sync, sync, "Invoke", false, "InvokeTarget");
     }
 

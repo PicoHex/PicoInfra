@@ -254,9 +254,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
                 $"    internal readonly {interceptorTypes[i].ToDisplayString(Fq)} _i{i};"
             );
         foreach (var p in method.Parameters)
-            sb.AppendLine(
-                $"    internal readonly {p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} _{p.Name};"
-            );
+            sb.AppendLine($"    internal readonly {InvocationEmitter.Declared(p.Type)} _{p.Name};");
         sb.AppendLine();
 
         // Constructor
@@ -271,9 +269,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
                 ", "
                 + string.Join(
                     ", ",
-                    method.Parameters.Select(p =>
-                        $"{p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)} {p.Name}"
-                    )
+                    method.Parameters.Select(p => $"{InvocationEmitter.Declared(p.Type)} {p.Name}")
                 );
         ctorParams += ")";
 
@@ -352,7 +348,7 @@ public sealed partial class InterceptorGenerator : IIncrementalGenerator
         var prop = member.Property!;
         var target = TargetOf(member);
         var svcFullName = serviceType.ToDisplayString(Fq);
-        var propType = prop.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var propType = InvocationEmitter.Declared(prop.Type);
         var intSuffix = string.Join(
             "_",
             interceptorTypes.Select(t => InvocationEmitter.Sanitize(t.ToDisplayString(Fq)))
