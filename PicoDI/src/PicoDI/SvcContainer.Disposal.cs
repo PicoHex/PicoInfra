@@ -15,7 +15,7 @@ public sealed partial class SvcContainer
         //
         // 1. Hosted services stop first: their StopAsync may still use any service, including
         //    singletons, and nothing else may run before they are down.
-        await StopHostedServicesAsync().ConfigureAwait(false);
+        await StopHostedServicesDuringDisposalAsync().ConfigureAwait(false);
 
         // 2. User root scopes: a scoped Dispose may use the singletons it depends on, so every
         //    scope is disposed before the singleton pass. Until review-2026-11-02 finding 3

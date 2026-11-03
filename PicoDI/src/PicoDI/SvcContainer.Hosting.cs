@@ -34,17 +34,27 @@ public sealed partial class SvcContainer
     );
 
     /// <summary>
-    /// Wall-clock budget of ONE stop pass that runs on the container's own initiative: the
-    /// disposal path and the rollback of a failed start. A cancelled start token must not skip
-    /// the cleanup, and a service that ignores cancellation must not hang it forever — the pass
-    /// gets this much time in total, after which its remaining phases are abandoned and reported
-    /// as <see cref="TimeoutException"/> (review-2026-11-02 defect L5: this used to be a
-    /// <c>CancellationTokenSource</c> that bounded nothing, because a token only signals).
+    /// Wall-clock budget of ONE hosted service inside a stop pass that runs on the container's own
+    /// initiative: the disposal path and the rollback of a failed start. A cancelled start token
+    /// must not skip the cleanup, and a service that ignores cancellation must not hang it forever
+    /// — each service gets this much time in total, after which its remaining phases are abandoned
+    /// and reported as <see cref="TimeoutException"/> (review-2026-11-02 defect L5: this used to be
+    /// a <c>CancellationTokenSource</c> that bounded nothing, because a token only signals).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Per service, not per pass (review-2026-11-02 Medium 2): a shared budget meant the first
+    /// service that ignored its token consumed all of it, and every service behind it was never
+    /// stopped at all — while still being recorded as stopped, so nothing could ever stop it later.
+    /// The cost of one hung service is now one budget; the cost of N hung services is N budgets,
+    /// which is the bound <c>StopHostedServicesAsync</c> already promises ("every service is still
+    /// stopped"). A lifecycle service's three stop phases share its budget.
+    /// </para>
+    /// <para>
     /// An instance member, not a static, so a test can shrink the window without affecting a test
     /// that runs in parallel. The caller-driven <c>StopAsync(token)</c> path is not bounded by it:
     /// there the caller's token is the control surface.
+    /// </para>
     /// </remarks>
     internal TimeSpan HostedSvcStopTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
@@ -205,7 +215,7 @@ public sealed partial class SvcContainer
 
                 // review-2026-11-02 defect L5: this list used to be collected and never read, so
                 // a failed rollback stop lived only in OnError. It now travels on the exception
-                // the caller receives - Data is the channel that keeps that exception unwrapped.
+                // the caller receives — Data is the channel that keeps that exception unwrapped.
                 var rollBackStopFailures = await RollBackStartedServicesAsync(started)
                     .ConfigureAwait(false);
                 if (rollBackStopFailures.Count > 0)
@@ -227,17 +237,17 @@ public sealed partial class SvcContainer
     /// <remarks>
     /// Stop failures here never hide the start failure: the caller receives the start exception,
     /// unwrapped, and the rollback's own failures travel on its <see cref="Exception.Data"/> under
-    /// <see cref="RollBackStopFailuresKey"/> (plus <see cref="OnError"/>). The pass gets one
-    /// <see cref="HostedSvcStopTimeout"/> budget — it is the token the services receive AND the
-    /// deadline their phases are awaited with, so a service that ignores the token is abandoned
-    /// instead of hanging the rollback forever. The host is left <i>stopped</i> — a later
+    /// <see cref="RollBackStopFailuresKey"/> (plus <see cref="OnError"/>). Each service gets its own
+    /// <see cref="HostedSvcStopTimeout"/> stop budget — see
+    /// <see cref="StopInstanceWithinBudgetAsync"/> — so a service that ignores the token costs one
+    /// budget and is abandoned instead of hanging the rollback forever, and the services behind it
+    /// still get stopped. The host is left <i>stopped</i> — a later
     /// <c>StopAsync</c>/<c>DisposeAsync</c> must not run a second stop over services already down.
     /// </remarks>
     private async ValueTask<List<Exception>> RollBackStartedServicesAsync(
         List<(SvcRuntimeRegistration Registration, object Instance)> started
     )
     {
-        using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
         var stopFailures = new List<Exception>();
 
         for (int i = started.Count - 1; i >= 0; i--)
@@ -246,7 +256,7 @@ public sealed partial class SvcContainer
             if (!_stoppedHostedInstances.Add(instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cts.Token, stopFailures, cts.Token)
+            await StopInstanceWithinBudgetAsync(registration, instance, stopFailures)
                 .ConfigureAwait(false);
         }
 
@@ -279,19 +289,20 @@ public sealed partial class SvcContainer
     /// <summary>
     /// The single stop pass: consumes the one-shot state, serializes on the hosting lock and runs
     /// the LIFO stop. Split out of <see cref="StopHostedServicesAsync(CancellationToken)"/> so the
-    /// disposal path can run it without the disposed guard — <see cref="DisposeAsync"/> sets the
-    /// flag it would be checking, and a disposal path never throws.
+    /// disposal path (<see cref="StopHostedServicesDuringDisposalAsync"/>) can run it without the
+    /// disposed guard — <see cref="DisposeAsync"/> sets the flag it would be checking, and a
+    /// disposal path never throws.
     /// </summary>
     /// <param name="cancellationToken">Token handed to the services.</param>
-    /// <param name="deadline">
-    /// Deadline the individual phases are awaited with, in addition to the token they receive.
-    /// Default (not cancellable) for the caller-driven <c>StopAsync</c>: there the caller's token
-    /// is the control surface and an unbounded wait is the documented behaviour. The
-    /// container-initiated passes pass their <see cref="HostedSvcStopTimeout"/> token here.
+    /// <param name="boundEachServiceToBudget">
+    /// <c>true</c> for the passes the container runs on its own initiative (disposal, failed-start
+    /// rollback): every service is then stopped inside its own <see cref="HostedSvcStopTimeout"/>
+    /// budget. <c>false</c> (default) for the caller-driven <c>StopAsync</c>: there the caller's
+    /// token is the control surface and an unbounded wait is the documented behaviour.
     /// </param>
     private async Task StopHostedServicesOnceAsync(
         CancellationToken cancellationToken,
-        CancellationToken deadline = default
+        bool boundEachServiceToBudget = false
     )
     {
         if (!TryTransitionToStopped())
@@ -300,7 +311,8 @@ public sealed partial class SvcContainer
         await _hostingLock.WaitAsync(CancellationToken.None).ConfigureAwait(false);
         try
         {
-            await StopHostedServicesCoreAsync(cancellationToken, deadline).ConfigureAwait(false);
+            await StopHostedServicesCoreAsync(cancellationToken, boundEachServiceToBudget)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -310,7 +322,7 @@ public sealed partial class SvcContainer
 
     private async Task StopHostedServicesCoreAsync(
         CancellationToken cancellationToken,
-        CancellationToken deadline = default
+        bool boundEachServiceToBudget
     )
     {
         var registrations = Volatile.Read(ref _hostedRegistrations);
@@ -333,8 +345,16 @@ public sealed partial class SvcContainer
             if (!_stoppedHostedInstances.Add(instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cancellationToken, failures, deadline)
-                .ConfigureAwait(false);
+            if (boundEachServiceToBudget)
+            {
+                await StopInstanceWithinBudgetAsync(registration, instance, failures)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                await StopInstanceAsync(registration, instance, cancellationToken, failures)
+                    .ConfigureAwait(false);
+            }
         }
 
         if (failures.Count > 0)
@@ -350,10 +370,43 @@ public sealed partial class SvcContainer
     }
 
     /// <summary>
+    /// Runs the stop sequence of one hosted service inside its own
+    /// <see cref="HostedSvcStopTimeout"/> budget — one budget per <i>service</i>, not per pass
+    /// (review-2026-11-02 Medium 2).
+    /// </summary>
+    /// <remarks>
+    /// A shared pass budget made the first service that ignored its token consume all of it, so
+    /// every service behind it was never stopped at all (<c>StopPhaseAsync</c> reported it as "not
+    /// run: the deadline had already expired") while still being recorded in
+    /// <see cref="_stoppedHostedInstances"/> — nothing could ever stop it later. A per-service budget
+    /// keeps the bound honest in both directions: a hang costs one service's budget instead of
+    /// silently starving the rest, and the pass still terminates, with at most N budgets for N
+    /// services. The token is both the cancellation signal the service receives and the deadline
+    /// its phases are awaited with, so a service that <i>honours</i> it is told to wrap up at its
+    /// own deadline rather than at a shared one it may never reach.
+    /// </remarks>
+    private async Task StopInstanceWithinBudgetAsync(
+        SvcRuntimeRegistration registration,
+        object instance,
+        List<Exception> failures
+    )
+    {
+        using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
+        await StopInstanceAsync(registration, instance, cts.Token, failures, cts.Token)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Runs the stop sequence of one hosted service. Each phase is isolated: a throwing phase
     /// is reported to <see cref="OnError"/> and added to <paramref name="failures"/>, and the
     /// remaining phases still run — same fault isolation as before, minus the swallowing.
     /// </summary>
+    /// <remarks>
+    /// A non-cancellable <c>deadline</c> (the caller-driven <c>StopAsync</c> path) means no budget:
+    /// there the caller's token is the only control surface. Otherwise it is this service's stop
+    /// budget — its phases are awaited through it and at most one of them can consume it, so a
+    /// lifecycle service reports its remaining phases as "not run" rather than blaming them.
+    /// </remarks>
     private async Task StopInstanceAsync(
         SvcRuntimeRegistration registration,
         object instance,
@@ -426,7 +479,7 @@ public sealed partial class SvcContainer
     }
 
     /// <summary>
-    /// Awaits one stop phase and enforces the deadline of the pass it belongs to.
+    /// Awaits one stop phase and enforces the budget of the service it belongs to.
     /// </summary>
     /// <remarks>
     /// A <see cref="CancellationTokenSource"/> only signals: handing its token to a service that
@@ -434,9 +487,12 @@ public sealed partial class SvcContainer
     /// rather than a bound (review-2026-11-02 defect L5). Awaiting through
     /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline;
     /// the abandoned phase is reported as a <see cref="TimeoutException"/> and the pass keeps
-    /// going with its remaining phases, so a hung service cannot hold a disposal or a rollback.
-    /// A phase whose deadline had already expired is reported without being started, so the
-    /// failure says what happened instead of blaming a service that never ran.
+    /// going with its remaining services, so a hung service cannot hold a disposal or a rollback.
+    /// The budget belongs to one service, so "the pass keeps going" includes the services behind
+    /// the hung one instead of starving them (review-2026-11-02 Medium 2). A phase whose budget had
+    /// already expired — the second and third phase of a lifecycle service whose first one consumed
+    /// it — is reported without being started, so the failure says what happened instead of blaming
+    /// a service that never ran.
     /// </remarks>
     private async Task RunPhaseWithinDeadlineAsync(
         Func<Task> action,
@@ -453,7 +509,7 @@ public sealed partial class SvcContainer
 
         if (deadline.IsCancellationRequested)
             throw new TimeoutException(
-                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' was not run: the stop pass's {DescribeStopTimeout()} deadline had already expired."
+                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' was not run: its {DescribeStopTimeout()} stop budget had already expired."
             );
 
         var phaseTask = action();
@@ -463,21 +519,96 @@ public sealed partial class SvcContainer
         }
         catch (OperationCanceledException) when (!phaseTask.IsCompleted)
         {
+            // Nothing is waiting for the phase now: the only observer it can still have is the one
+            // this attaches (review-2026-11-02 Medium 1).
+            ObserveAbandonedPhase(phaseTask, phase, registration);
+
             throw new TimeoutException(
-                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' did not complete within the stop pass's {DescribeStopTimeout()} deadline and was abandoned. The service ignores the cancellation token it was given."
+                $"The {phase} phase of hosted service '{registration.ServiceType.FullName}' did not complete within its {DescribeStopTimeout()} stop deadline and was abandoned. It keeps running while the shutdown proceeds, and it cannot be stopped again."
             );
         }
+    }
+
+    /// <summary>
+    /// Attaches the only observer an abandoned phase has left.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An abandoned phase is not cancelled — <see cref="Task.WaitAsync(CancellationToken)"/> stops
+    /// waiting, the task keeps running, and nothing awaits it again. A fault it raises later
+    /// therefore has no awaiter: it surfaces as an unobserved task exception when the task is
+    /// finalized, and <see cref="OnError"/> defaults to <see langword="null"/>, so in a default
+    /// configuration the whole thing is silent (review-2026-11-02 Medium 1). The service is also
+    /// already recorded in <see cref="_stoppedHostedInstances"/>, so no later `StopAsync` can run
+    /// it a second time — this report is the last thing that will ever be heard about it.
+    /// </para>
+    /// <para>
+    /// Observability only: it cancels nothing, retries nothing and delays nothing, and it is the
+    /// same exception the start and stop paths propagate — the service's own, not
+    /// <see cref="Task.Exception"/>'s aggregate wrapper. It cannot fire twice, because a task
+    /// completes once.
+    /// </para>
+    /// <para>
+    /// Why <see cref="OnError"/> and not the <see cref="Exception.Data"/> bag the rollback failures
+    /// use — the decision review-2026-11-02 Medium 1 asks to justify: the abandonment itself is
+    /// already surfaced synchronously on both passes. The rollback folds its
+    /// <see cref="TimeoutException"/> into <see cref="RollBackStopFailuresKey"/> and rethrows the
+    /// start exception; <see cref="DisposeAsync"/> reports it to <see cref="OnError"/>, because a
+    /// disposal path never throws and a <see cref="ValueTask"/> has no result to carry one. This
+    /// later fault arrives <i>after</i> that call returned, so folding it into the same list would
+    /// give one bag two meanings and would append to a <c>List&lt;Exception&gt;</c> the caller may
+    /// already be enumerating — from a thread-pool thread, on a list that is not thread-safe.
+    /// Reporting it here keeps "present only when something failed" a property of one call rather
+    /// than of an instant in time. There is no retry surface to offer either: the instance is in
+    /// <see cref="_stoppedHostedInstances"/>, and after disposal <c>StopAsync</c> faults, so a
+    /// second stop of this instance cannot happen.
+    /// </para>
+    /// </remarks>
+    private void ObserveAbandonedPhase(
+        Task phaseTask,
+        string phase,
+        SvcRuntimeRegistration registration
+    )
+    {
+        _ = phaseTask.ContinueWith(
+            static (task, state) =>
+            {
+                var (container, phaseName, serviceName) = ((SvcContainer, string, string))state!;
+                var error =
+                    task.Exception!.InnerExceptions.Count == 1
+                        ? task.Exception.InnerException!
+                        : task.Exception;
+
+                container.OnError?.Invoke(
+                    error,
+                    $"The {phaseName} phase of hosted service '{serviceName}' was abandoned at the stop deadline and failed later"
+                );
+            },
+            (this, phase, registration.ServiceType.FullName),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     private string DescribeStopTimeout() =>
         string.Create(CultureInfo.InvariantCulture, $"{HostedSvcStopTimeout.TotalSeconds} s");
 
-    private async ValueTask StopHostedServicesAsync()
+    /// <summary>
+    /// The stop pass the disposal path runs — named for its caller (review-2026-11-02 Low 4) so
+    /// that the throwing <see cref="StopHostedServicesAsync(CancellationToken)"/> cannot be reached
+    /// by accident from a path that must never throw.
+    /// </summary>
+    /// <remarks>
+    /// Swallows what the pass throws into <see cref="OnError"/>: the individual failures were
+    /// already reported by <c>StopPhaseAsync</c>, this only adds the disposal context.
+    /// </remarks>
+    private async ValueTask StopHostedServicesDuringDisposalAsync()
     {
-        using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
         try
         {
-            await StopHostedServicesOnceAsync(cts.Token, cts.Token).ConfigureAwait(false);
+            await StopHostedServicesOnceAsync(default, boundEachServiceToBudget: true)
+                .ConfigureAwait(false);
         }
         catch (Exception ex)
         {
