@@ -76,20 +76,73 @@ public sealed class AssemblySurfaceTests
     [Test]
     public async Task PicoLog_ReferencesNoSerializer()
     {
-        // The core package's entire dependency list is PicoLog.Abs. Serialization is the sink
-        // package's job (PicoLog.Json references PicoJetson), and this test is the tripwire for a
-        // "just reference the writer" shortcut inside core.
+        // The core package's entire dependency list is PicoLog.Abs plus in-framework assemblies.
+        // Serialization is the sink package's job (PicoLog.Json references PicoJetson), and this
+        // test is the tripwire for a "just reference the writer" shortcut inside core.
+        //
+        // The assertion is an ALLOW-LIST of every assembly PicoLog.dll may reference — not a
+        // deny-list of Pico-named ones. A `name.StartsWith("Pico")` filter can only ever see a
+        // Pico-named serializer, so the first person who reaches for the obvious framework
+        // serializer walks straight through it: with `typeof(System.Text.Json.JsonDocument)`
+        // compiled into this assembly the dll carries a real System.Text.Json AssemblyRef and that
+        // filter still passed. An exact list has no such blind spot — a new reference fails here
+        // whether it is Pico-named, framework-named, or a transitive package.
+        //
+        // What this cannot catch: an UNUSED <PackageReference> in PicoLog.csproj. Roslyn emits an
+        // AssemblyRef only for an assembly whose types are used, so a bare
+        // `<PackageReference Include="PicoJetson" />` leaves this assembly's metadata unchanged and
+        // the pin green (measured) — even though the reference still installs the package for
+        // every consumer of PicoLog. Catching that needs a csproj-level pin, which is deliberately
+        // not done here: it would have to find and parse the project file from inside a test
+        // binary, and this pin has to hold for the shipped assembly, not for the source tree.
+        //
+        // Keeping the list exact is the point: adding a dependency means editing it here, which is
+        // the review moment the rule needs.
 #pragma warning disable IL2026
         // Test-only reflection: this assembly is never trimmed or published.
         var references = typeof(LoggerFactory)
             .Assembly.GetReferencedAssemblies()
             .Select(reference => reference.Name ?? string.Empty)
-            .Where(name => name.StartsWith("Pico", StringComparison.Ordinal))
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
 #pragma warning restore IL2026
 
-        await Assert.That(string.Join(",", references)).IsEqualTo("PicoLog.Abs");
+        string[] allowedReferences =
+        [
+            "PicoLog.Abs",
+            "System.Collections",
+            "System.Collections.Concurrent",
+            "System.Console",
+            "System.Diagnostics.DiagnosticSource",
+            "System.Linq",
+            "System.Runtime",
+            "System.Runtime.InteropServices",
+            "System.Threading",
+            "System.Threading.Channels",
+            "System.Threading.Thread",
+        ];
+
+        await Assert
+            .That(string.Join(",", references))
+            .IsEqualTo(string.Join(",", allowedReferences));
+
+        // A second, targeted assertion, because the cheap fix for a red allow-list is to append the
+        // offending name to it: the rule is "core carries no serializer", so a serializer-named
+        // reference is a red test even after someone has added it to the list above. The fragment
+        // match is a heuristic on purpose — it is the belt, the exact list is the braces.
+        string[] serializerNameFragments = ["json", "serde", "jetson", "serializer", "newtonsoft"];
+        var serializerReferences = references
+            .Where(name =>
+                serializerNameFragments.Any(fragment =>
+                    name.Contains(fragment, StringComparison.OrdinalIgnoreCase)
+                )
+            )
+            .ToArray();
+
+        await Assert
+            .That(string.Join(",", serializerReferences))
+            .IsEqualTo(string.Empty)
+            .Because("PicoLog must carry no serializer; the JSON sinks live in PicoLog.Json");
     }
 
     private static bool HasPublicParameterlessDispose(Type type) =>
