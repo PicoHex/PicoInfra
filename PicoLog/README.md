@@ -183,7 +183,7 @@ The generator emits `Log` calls with `FormattableString` at compile time — zer
 
 ## Sinks
 
-### Built-in
+### Built-in — `PicoLog`
 
 ```csharp
 // Plain console
@@ -201,6 +201,43 @@ new FileSink(new ConsoleFormatter(), new FileSinkOptions
     FlushInterval = TimeSpan.FromMilliseconds(100)
 })
 ```
+
+### Built-in — `PicoLog.Json`
+
+The sinks that own JSON live in the `PicoLog.Json` package, because the core package carries the
+log model, the levels and the sink abstraction — and no serializer.
+
+```shell
+dotnet add package PicoLog.Json
+```
+
+```csharp
+using PicoLog;   // the namespace of both sinks, unchanged by the package they ship in
+
+// One JSON object per line, to a file
+new JsonLogSink("logs/app.jsonl")
+
+// Batched HTTP POST to a Seq server (retry, backoff, periodic flush, optional console fallback)
+new SeqSink(new HttpClient { BaseAddress = new Uri("http://localhost:5341") },
+    apiKey: "your-api-key",
+    flushInterval: TimeSpan.FromSeconds(2),
+    enableConsoleFallback: true)
+```
+
+`SeqSink` moved here from the core package; `using PicoLog;` and `new SeqSink(...)` still compile —
+the only thing a consumer adds is the package reference.
+
+Both sinks write through PicoJetson's `JsonWriter`, so the batch body is UTF-8 from the first byte:
+no `StringBuilder`, no per-entry string, and no hand-rolled escaper. Measured on the 100-entry
+batch of `SeqSinkWireFormatTests` (JIT, Release, `GC.GetAllocatedBytesForCurrentThread`, median of
+two runs): **1487 B/event before, 221 B/event after**. That is an allocation count, not a timing
+claim — 109 B of the remainder is the one unavoidable copy of the body and ~90 B is the
+`DateTime.ToString("O")` string the old path paid too.
+
+Escaping is the writer's canonical form: `\n`, `\r`, `\t`, `\"` and `\\` keep their
+two-character escapes, every other C0 control becomes `\u00XX` with **uppercase** hex digits,
+U+2028/U+2029 stay raw, and an unpaired surrogate reaches the wire as U+FFFD. The body of every
+batch is one valid JSON document for any payload.
 
 ### Custom
 
@@ -405,9 +442,15 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 
 | Package | TFM | Description |
 |---|---|---|
-| **PicoLog** | net10.0 | Logging runtime: `LoggerFactory`, sinks, formatters |
+| **PicoLog** | net10.0 | Logging runtime: `LoggerFactory`, console + file sinks, formatters |
 | **PicoLog.Abs** | net10.0 | `ILogger`, `ILogSink`, `LogLevel`, `LogEntry`, `EventId` |
 | **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator (embedded in `PicoLog.Abs`; not a standalone package) |
 | **PicoLog.DI** | net10.0 | DI integration (`AddPicoLog`, `WriteTo`, `ReadFrom`) |
+| **PicoLog.Json** | net10.0 | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter` |
+
+**Package move.** `SeqSink` moved from `PicoLog` to `PicoLog.Json` — same type, same
+`namespace PicoLog`, no code change on the caller's side; add `dotnet add package PicoLog.Json`.
+Core `PicoLog` no longer references any serializer (it never did), which is why the sink that must
+write JSON cannot live there.
 
 [← Back to PicoInfra](../README.md)

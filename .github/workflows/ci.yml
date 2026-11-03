@@ -467,8 +467,10 @@ jobs:
       - name: Run PicoLog tests (linux-arm64 — increased parallelism, I/O-bound on slow VM)
         if: matrix.rid == 'linux-arm64'
         run: dotnet test --project PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --maximum-parallel-tests 4 --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
+      # SeqSink's tests live here now (the sink moved into this package), so this step keeps the
+      # hang/crash-dump protection they had under the PicoLog.Tests steps above.
       - name: Run PicoLog.Json tests
-        run: dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true
+        run: dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
       - name: Upload hang/crash dumps
         if: always()
         uses: actions/upload-artifact@v7

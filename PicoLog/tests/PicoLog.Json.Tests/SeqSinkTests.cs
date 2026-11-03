@@ -1,4 +1,4 @@
-namespace PicoLog.Tests;
+namespace PicoLog.Json.Tests;
 
 public sealed class SeqSinkTests
 {

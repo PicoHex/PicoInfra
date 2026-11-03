@@ -6,10 +6,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>true</IsPackable>
     <PackageId>PicoLog.Json</PackageId>
-    <Description>Structured JSON log sink for PicoLog via PicoJetson</Description>
+    <Description>The two PicoLog sinks that own JSON: the newline-delimited JsonLogSink file sink and the batched SeqSink HTTP sink — both written with the PicoJetson JsonWriter</Description>
     <PackageTags>PicoHex;Logging;JSON;AOT</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PicoLog.Json.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />

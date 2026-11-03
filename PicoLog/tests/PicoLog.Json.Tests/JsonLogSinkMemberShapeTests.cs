@@ -132,9 +132,9 @@ public class JsonLogSinkMemberShapeTests
             // The raw control characters must not reach the file at all.
             await Assert.That(text).DoesNotContain("\u0001");
             await Assert.That(text).DoesNotContain("\u001f");
-            // JsonWriter emits the canonical RFC 8259 uppercase form (\u001F); SeqSink's own
-            // hand-rolled escaper uses lowercase (\u001f). Both are legal JSON — the point here
-            // is only that this sink escapes through the writer, not through SeqSink's table.
+            // JsonWriter emits the canonical RFC 8259 uppercase form (\u001F). The hand-rolled
+            // escaper SeqSink used to carry wrote lowercase (\u001f); both are legal JSON, and
+            // this line only pins that the writer is what escapes here.
             await Assert.That(text).Contains("\\u0001");
             await Assert.That(text).Contains("\\u001F");
             await Assert.That(text).Contains("\\n");
