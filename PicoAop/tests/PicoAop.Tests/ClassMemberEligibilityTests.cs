@@ -263,6 +263,96 @@ public class ClassMemberEligibilityTests : GeneratorTestBase
         await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
     }
 
+    /// <summary>
+    /// A class service is planned from its own members only (the proxy derives
+    /// from it, so inherited members need no re-declaration), which meant a
+    /// <c>virtual</c> member inherited from a base class was neither intercepted
+    /// nor reported: the call silently ran the base implementation on the proxy
+    /// instance. Same hole for a <c>protected virtual</c> member of the service
+    /// itself, which <c>IsPlannedShape</c> excludes without a word.
+    /// review-2026-11-02/rev-aop-3c.md, D5. A full base walk — planning,
+    /// overriding and intercepting inherited members — is out of scope here; one
+    /// PICO111 per skipped member is not.
+    /// </summary>
+    [Test]
+    public async Task InheritedVirtualClassMember_IsReportedInsteadOfSkippedSilently()
+    {
+        var assembly = CompileAndLoad(
+            Preamble
+                + """
+
+                public class Base
+                {
+                    public virtual int Inherited() => 1;
+                }
+
+                public class Svc : Base
+                {
+                    public virtual int Own() => 2;
+                }
+                """,
+            out var result
+        );
+        var proxy = CreateProxy(assembly);
+        var svcType = assembly.GetType("Svc")!;
+
+        // A consumer holding `Svc` calls the inherited member on the proxy
+        // instance; the chain never sees it.
+        var inherited = (int)svcType.GetMethod("Inherited")!.Invoke(proxy, [])!;
+        var own = (int)svcType.GetMethod("Own")!.Invoke(proxy, [])!;
+        var calls = ReadCalls(assembly);
+        Console.WriteLine($"Inherited()={inherited} Own()={own}");
+        Console.WriteLine($"CALLS: {string.Join(",", calls)}");
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        await Assert.That(inherited).IsEqualTo(1);
+        await Assert.That(own).IsEqualTo(2);
+        // The service's own virtual member is still routed ...
+        await Assert.That(calls.Contains("sync:Own")).IsTrue();
+        // ... the inherited one is not, and that is now reported instead of
+        // being silent.
+        await Assert.That(calls.Contains("sync:Inherited")).IsFalse();
+        await Assert.That(result.GeneratedOutput.Contains("Invocation_Svc_Inherited")).IsFalse();
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+        await Assert.That(result.DiagnosticText.Contains("'Inherited'")).IsTrue();
+        await Assert.That(result.DiagnosticText.Contains("'Base'")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// The same hole for the service's own <c>protected virtual</c> member: a
+    /// derived implementation cannot widen its accessibility (CS0507), so it is
+    /// neither planned nor intercepted — and it used to say nothing at all.
+    /// </summary>
+    [Test]
+    public async Task ProtectedVirtualClassMemberOfTheService_IsReported()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public class Svc
+                {
+                    protected virtual int Hidden() => 3;
+                    public virtual int Ok() => 1;
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+        await Assert.That(result.DiagnosticText.Contains("'Hidden'")).IsTrue();
+        // The public virtual member next to it is still intercepted.
+        await Assert.That(result.GeneratedOutput.Contains("Invocation_Svc_Ok")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
     private static object CreateProxy(Assembly assembly)
     {
         var proxyType =

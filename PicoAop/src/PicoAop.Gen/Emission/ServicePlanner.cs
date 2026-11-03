@@ -183,6 +183,11 @@ internal static class ServicePlanner
             );
         }
 
+        // A class service inherits its base members instead of re-declaring
+        // them, so anything un-interceptable up the chain has to be named.
+        if (service.TypeKind == TypeKind.Class)
+            ReportUnplannedClassMembers(service, planned, diagnostics);
+
         if (skipService)
             return null;
 
@@ -639,6 +644,104 @@ internal static class ServicePlanner
         foreach (var baseInterface in service.AllInterfaces)
             yield return baseInterface;
     }
+
+    /// <summary>
+    /// Reports every member of a class service that the plan does not cover but
+    /// that a caller can still reach through the service type. The proxy derives
+    /// from the class, so an inherited member needs no re-declaration — which is
+    /// also why an inherited <c>virtual</c> member was planned by nobody and
+    /// reported by nobody: the call silently ran the base implementation on the
+    /// proxy instance. A <c>protected</c> member of the service itself fell into
+    /// the same hole (<see cref="IsPlannedShape"/> requires public, and a derived
+    /// implementation cannot widen the accessibility — CS0507).
+    /// <para>
+    /// Walking the base types and emitting overrides for what is found there is a
+    /// larger change (the invocation struct, the chain fields and the plan would
+    /// all have to accept a member the service does not declare); until then one
+    /// PICO111 per skipped member keeps the hole from being silent
+    /// (review-2026-11-02/rev-aop-3c.md, D5).
+    /// </para>
+    /// </summary>
+    private static void ReportUnplannedClassMembers(
+        INamedTypeSymbol service,
+        List<PlannedMember> planned,
+        List<Diagnostic> diagnostics
+    )
+    {
+        var plannedSlots = new HashSet<string>(
+            planned.Select(member => SlotKey(SymbolOf(member))),
+            StringComparer.Ordinal
+        );
+
+        // Nearest declaration first: a call binds to the most derived override,
+        // so once a type in the chain declares the slot, the declarations behind
+        // it are covered by it.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (
+            var type = service;
+            type is not null && type.SpecialType != SpecialType.System_Object;
+            type = type.BaseType
+        )
+        {
+            var isService = SymbolEqualityComparer.Default.Equals(type, service);
+            foreach (var member in type.GetMembers())
+            {
+                if (!IsRoutableCandidate(member))
+                    continue;
+
+                var slot = SlotKey(member);
+                if (!seen.Add(slot))
+                    continue;
+
+                // A member the service declares itself is the plan's business: it
+                // is either planned, or it was reported while being planned.
+                if (isService && plannedSlots.Contains(slot))
+                    continue;
+
+                diagnostics.Add(
+                    Diagnostic.Create(
+                        PicoAopDiag.MemberDelegated,
+                        Location.None,
+                        member.Name,
+                        service.Name,
+                        isService
+                            ? "a non-public member of the service, which a derived proxy cannot re-declare without changing its accessibility; calls execute on the inherited implementation, and the emitted pass-through is never reached"
+                            : $"inherited from '{type.Name}', which the proxy does not re-declare; calls execute on the inherited implementation, and the emitted pass-through is never reached"
+                    )
+                );
+            }
+        }
+    }
+
+    /// <summary>
+    /// A member the proxy might have routed had it been planned: an ordinary
+    /// instance method, property or event that is <c>virtual</c>, <c>abstract</c>
+    /// or an override, and that a derived type can see.
+    /// </summary>
+    private static bool IsRoutableCandidate(ISymbol member) =>
+        member switch
+        {
+            IMethodSymbol { MethodKind: MethodKind.Ordinary, IsStatic: false } method =>
+                IsVisibleToDerived(method.DeclaredAccessibility)
+                    && (method.IsVirtual || method.IsAbstract || method.IsOverride),
+            IPropertySymbol { IsStatic: false } property => IsVisibleToDerived(
+                property.DeclaredAccessibility
+            ) && (property.IsVirtual || property.IsAbstract || property.IsOverride),
+            IEventSymbol { IsStatic: false } @event => IsVisibleToDerived(
+                @event.DeclaredAccessibility
+            ) && (@event.IsVirtual || @event.IsAbstract || @event.IsOverride),
+            _ => false,
+        };
+
+    /// <summary>
+    /// Whether a member declared in a base type is reachable from the proxy type
+    /// — and therefore worth reporting when it is skipped.
+    /// </summary>
+    private static bool IsVisibleToDerived(Accessibility accessibility) =>
+        accessibility
+            is Accessibility.Public
+                or Accessibility.Protected
+                or Accessibility.ProtectedOrInternal;
 
     /// <summary>
     /// The full C# signature of a member — return type included, and the
