@@ -59,6 +59,31 @@ public sealed class AssemblySurfaceTests
         await Assert.That(picoLogAssembly.GetType("PicoLog.Abs.LogEntry")).IsNull();
         await Assert.That(picoLogAssembly.GetType("PicoLog.Abs.IFlushableLoggerFactory")).IsNull();
         await Assert.That(picoLogAssembly.GetType("PicoLog.Abs.FlushExtensions")).IsNull();
+        // A sink implementation is not runtime plumbing: SeqSink serializes JSON, so it ships in
+        // PicoLog.Json (namespace unchanged) and the core package carries neither it nor a
+        // serializer reference. Pinned here because "core has no sink implementations" is the
+        // design rule the move implements, and a file added back to this project would restore
+        // the hand-rolled escaper rather than fail a build.
+        await Assert.That(picoLogAssembly.GetType("PicoLog.SeqSink")).IsNull();
+    }
+
+    [Test]
+    public async Task PicoLog_ReferencesNoSerializer()
+    {
+        // The core package's entire dependency list is PicoLog.Abs. Serialization is the sink
+        // package's job (PicoLog.Json references PicoJetson), and this test is the tripwire for a
+        // "just reference the writer" shortcut inside core.
+#pragma warning disable IL2026
+        // Test-only reflection: this assembly is never trimmed or published.
+        var references = typeof(LoggerFactory)
+            .Assembly.GetReferencedAssemblies()
+            .Select(reference => reference.Name ?? string.Empty)
+            .Where(name => name.StartsWith("Pico", StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+#pragma warning restore IL2026
+
+        await Assert.That(references).IsEquivalentTo((string[])["PicoLog.Abs"]);
     }
 
     private static bool HasPublicParameterlessDispose(Type type) =>

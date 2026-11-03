@@ -183,7 +183,7 @@ The generator emits `Log` calls with `FormattableString` at compile time — zer
 
 ## Sinks
 
-### Built-in
+### Built-in — `PicoLog`
 
 ```csharp
 // Plain console
@@ -201,6 +201,31 @@ new FileSink(new ConsoleFormatter(), new FileSinkOptions
     FlushInterval = TimeSpan.FromMilliseconds(100)
 })
 ```
+
+### Built-in — `PicoLog.Json`
+
+The sinks that own JSON live in the `PicoLog.Json` package, because the core package carries the
+log model, the levels and the sink abstraction — and no serializer.
+
+```shell
+dotnet add package PicoLog.Json
+```
+
+```csharp
+using PicoLog;   // the namespace of both sinks, unchanged by the package they ship in
+
+// One JSON object per line, to a file
+new JsonLogSink("logs/app.jsonl")
+
+// Batched HTTP POST to a Seq server (retry, backoff, periodic flush, optional console fallback)
+new SeqSink(new HttpClient { BaseAddress = new Uri("http://localhost:5341") },
+    apiKey: "your-api-key",
+    flushInterval: TimeSpan.FromSeconds(2),
+    enableConsoleFallback: true)
+```
+
+`SeqSink` moved here from the core package; `using PicoLog;` and `new SeqSink(...)` still compile —
+the only thing a consumer adds is the package reference.
 
 ### Custom
 
@@ -405,9 +430,15 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 
 | Package | TFM | Description |
 |---|---|---|
-| **PicoLog** | net10.0 | Logging runtime: `LoggerFactory`, sinks, formatters |
+| **PicoLog** | net10.0 | Logging runtime: `LoggerFactory`, console + file sinks, formatters |
 | **PicoLog.Abs** | net10.0 | `ILogger`, `ILogSink`, `LogLevel`, `LogEntry`, `EventId` |
 | **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator (embedded in `PicoLog.Abs`; not a standalone package) |
 | **PicoLog.DI** | net10.0 | DI integration (`AddPicoLog`, `WriteTo`, `ReadFrom`) |
+| **PicoLog.Json** | net10.0 | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP) |
+
+**Package move.** `SeqSink` moved from `PicoLog` to `PicoLog.Json` — same type, same
+`namespace PicoLog`, no code change on the caller's side; add `dotnet add package PicoLog.Json`.
+Core `PicoLog` no longer references any serializer (it never did), which is why the sink that must
+write JSON cannot live there.
 
 [← Back to PicoInfra](../README.md)

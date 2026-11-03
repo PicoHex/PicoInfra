@@ -1,4 +1,4 @@
-namespace PicoLog.Tests;
+namespace PicoLog.Json.Tests;
 
 /// <summary>
 /// SeqSink hand-rolls its JSON (PicoLog references only PicoLog.Abs — no serializer),
