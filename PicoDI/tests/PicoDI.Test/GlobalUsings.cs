@@ -12,5 +12,6 @@ global using Microsoft.CodeAnalysis.Diagnostics;
 global using PicoDI.Abs;
 global using PicoDI.Gen;
 global using TUnit.Assertions;
+global using TUnit.Assertions.Enums;
 global using TUnit.Assertions.Extensions;
 global using TUnit.Core;

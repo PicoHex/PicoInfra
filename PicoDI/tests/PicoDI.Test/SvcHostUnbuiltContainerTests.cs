@@ -94,6 +94,30 @@ public class SvcHostUnbuiltContainerTests
     }
 
     [Test]
+    public async Task StopAsync_AfterTheContainerWasDisposed_ThrowsToo()
+    {
+        var svc = new CountingHostedSvc();
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.RegisterHostedSvc<CountingHostedSvc>(_ => svc);
+        var host = new SvcHost(container);
+        await host.StartAsync();
+
+        await container.DisposeAsync();
+
+        // review-2026-11-02 defect L4: after disposal StartAsync faults with
+        // ObjectDisposedException but StopAsync returned normally, contradicting the README's
+        // "Disposed scope/container: throws ObjectDisposedException". Disposal has already run
+        // the one stop pass, so a normal return here is indistinguishable from a shutdown that
+        // actually happened. The pair is now symmetric.
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => host.StopAsync());
+
+        // ...and the fault is only the report: the disposed path must not have stopped twice.
+        await Assert.That(svc.Stops).IsEqualTo(1);
+
+        await host.DisposeAsync();
+    }
+
+    [Test]
     public async Task SvcHostBuilder_StillBuildsBeforeStarting()
     {
         // The documented path must stay unaffected (it already calls container.Build()).
