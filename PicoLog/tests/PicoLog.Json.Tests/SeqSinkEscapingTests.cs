@@ -1,8 +1,7 @@
 namespace PicoLog.Json.Tests;
 
 /// <summary>
-/// SeqSink hand-rolls its JSON (PicoLog references only PicoLog.Abs — no serializer),
-/// so the wire format has to be proved to PARSE, not to "contain" the payload.
+/// The SeqSink wire format has to be proved to PARSE, not to "contain" the payload.
 /// Substring assertions were exactly the trap that hid the PicoLog.Json writer defect
 /// (<c>{"Message":"x""Level":"Info"}</c> kept every substring and lost every comma).
 /// These tests therefore feed payloads through the real sink, capture the bytes that
@@ -10,8 +9,8 @@ namespace PicoLog.Json.Tests;
 /// </summary>
 /// <remarks>
 /// System.Text.Json is used <b>in this test project only</b> as an independent JSON
-/// oracle. The sink's escaping is production code and must stay dependency-free;
-/// see the note in SeqSink's EscapeJson.
+/// oracle: the sink serializes through PicoJetson's <c>JsonWriter</c>, and an escaper
+/// checked only against its own reader proves nothing.
 /// </remarks>
 public sealed class SeqSinkEscapingTests
 {
@@ -72,7 +71,7 @@ public sealed class SeqSinkEscapingTests
     }
 
     // Every input the audit measured (U+0000, U+0008, U+000C, U+001F) plus the escape
-    // classes and non-ASCII shapes a hand-rolled escaper also has to get right.
+    // classes and non-ASCII shapes an escaper also has to get right.
     // RoundTrip is what Seq must read back; it differs from Input only where the value
     // cannot survive UTF-8 (an unpaired surrogate).
     private static readonly (string Label, string Input, string RoundTrip)[] Samples =
@@ -192,21 +191,26 @@ public sealed class SeqSinkEscapingTests
     [Test]
     public async Task Escaping_UsesTheDocumentedForms_Exactly()
     {
-        // input char -> emitted sequence. Short forms where JSON defines one,
-        // \u00XX (lowercase hex, 4 digits) for every other C0 control.
+        // input char -> emitted sequence, in JsonWriter's canonical form: the quote, the
+        // backslash and the three control characters JSON has a two-character escape for
+        // (\n, \r, \t); every other C0 control becomes \u00XX with UPPERCASE hex digits.
+        // That last part is the one wire change the writer brings: \b and \f — what the
+        // hand-rolled escaper this replaced emitted — are now \u0008 and \u000C, and the
+        // hex digits are uppercase. Both spellings decode to the same character, so the
+        // guarantee (a valid document that reads back the original text) is unchanged.
         var table = new (string Label, char Input, string Form)[]
         {
             ("quote", '"', "\\\""),
             ("backslash", '\\', "\\\\"),
-            ("backspace", '\b', "\\b"),
-            ("formfeed", '\f', "\\f"),
+            ("backspace", '\b', "\\u0008"),
+            ("formfeed", '\f', "\\u000C"),
             ("linefeed", '\n', "\\n"),
             ("carriage return", '\r', "\\r"),
             ("tab", '\t', "\\t"),
             ("U+0000", '\u0000', "\\u0000"),
             ("U+0001", '\u0001', "\\u0001"),
-            ("U+000B", '\u000b', "\\u000b"),
-            ("U+001F", '\u001f', "\\u001f"),
+            ("U+000B", '\u000b', "\\u000B"),
+            ("U+001F", '\u001f', "\\u001F"),
         };
 
         foreach (var (label, input, form) in table)

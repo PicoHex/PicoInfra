@@ -461,7 +461,7 @@ var mediator = scope.GetService<IMediator>();
 | **PicoLog** | Structured logging with sinks (console, colored-console, file) |
 | **PicoLog.Abs** | Logging abstractions (`ILogger`, `ILoggerFactory`, `ILogSink`, `ILogFormatter`, `LogEntry`, `LogLevel`) + embedded `[PicoLogMessage]` generator |
 | **PicoLog.DI** | DI integration — `AddPicoLog(Action<LoggingOptions>)` |
-| **PicoLog.Json** | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP). `SeqSink` moved here from `PicoLog` — same type, same `namespace PicoLog` |
+| **PicoLog.Json** | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter`. `SeqSink` moved here from `PicoLog` — same type, same `namespace PicoLog` |
 
 ### Mediator
 | Package | Description |

@@ -227,6 +227,18 @@ new SeqSink(new HttpClient { BaseAddress = new Uri("http://localhost:5341") },
 `SeqSink` moved here from the core package; `using PicoLog;` and `new SeqSink(...)` still compile —
 the only thing a consumer adds is the package reference.
 
+Both sinks write through PicoJetson's `JsonWriter`, so the batch body is UTF-8 from the first byte:
+no `StringBuilder`, no per-entry string, and no hand-rolled escaper. Measured on the 100-entry
+batch of `SeqSinkWireFormatTests` (JIT, Release, `GC.GetAllocatedBytesForCurrentThread`, median of
+two runs): **1487 B/event before, 221 B/event after**. That is an allocation count, not a timing
+claim — 109 B of the remainder is the one unavoidable copy of the body and ~90 B is the
+`DateTime.ToString("O")` string the old path paid too.
+
+Escaping is the writer's canonical form: `\n`, `\r`, `\t`, `\"` and `\\` keep their
+two-character escapes, every other C0 control becomes `\u00XX` with **uppercase** hex digits,
+U+2028/U+2029 stay raw, and an unpaired surrogate reaches the wire as U+FFFD. The body of every
+batch is one valid JSON document for any payload.
+
 ### Custom
 
 ```csharp
@@ -434,7 +446,7 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 | **PicoLog.Abs** | net10.0 | `ILogger`, `ILogSink`, `LogLevel`, `LogEntry`, `EventId` |
 | **PicoLog.Gen** | netstandard2.0 | `[PicoLogMessage]` source generator (embedded in `PicoLog.Abs`; not a standalone package) |
 | **PicoLog.DI** | net10.0 | DI integration (`AddPicoLog`, `WriteTo`, `ReadFrom`) |
-| **PicoLog.Json** | net10.0 | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP) |
+| **PicoLog.Json** | net10.0 | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter` |
 
 **Package move.** `SeqSink` moved from `PicoLog` to `PicoLog.Json` — same type, same
 `namespace PicoLog`, no code change on the caller's side; add `dotnet add package PicoLog.Json`.
