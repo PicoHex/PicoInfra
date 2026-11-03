@@ -15,9 +15,9 @@ namespace PicoDI.Test;
 /// (same type, same message, not wrapped), so <c>catch (InvalidOperationException)</c> still works;</item>
 /// <item>the failure aborts the start sequence — services registered after the failing one are
 /// not started;</item>
-/// <item>the services that already started are stopped in reverse registration order (LIFO)
-/// before the exception reaches the caller — a failed start must not leave background work
-/// running behind a host the caller was told to throw away;</item>
+/// <item>the services that already started are stopped in the exact reverse of the order they
+/// started (LIFO) before the exception reaches the caller — a failed start must not leave
+/// background work running behind a host the caller was told to throw away;</item>
 /// <item>the failing service does <b>not</b> receive <c>StopAsync</c> (its <c>StartAsync</c> did
 /// not complete — the same rule as <c>Microsoft.Extensions.Hosting</c>);</item>
 /// <item>the host is left <i>stopped</i>, not <i>started</i>: a later <c>StopAsync</c> or

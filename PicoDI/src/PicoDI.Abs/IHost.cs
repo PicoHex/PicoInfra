@@ -16,7 +16,7 @@ public interface IHost : IAsyncDisposable
     public Task StartAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stops all registered hosted services in reverse registration order.
+    /// Stops all started hosted services in the exact reverse of the order they started (LIFO).
     /// </summary>
     public Task StopAsync(CancellationToken cancellationToken = default);
 }

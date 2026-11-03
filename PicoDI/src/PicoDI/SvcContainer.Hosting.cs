@@ -4,6 +4,28 @@ public sealed partial class SvcContainer
 {
     private List<SvcRuntimeRegistration>? _hostedRegistrations;
 
+    /// <summary>
+    /// Hosted-service instances that finished their start sequence, in <b>start</b> order, with the
+    /// position their registration had in <see cref="_hostedRegistrations"/>. This is the list the
+    /// stop pass walks backwards: the registration list cannot answer "in which order did these
+    /// start", because it is grouped by service type and one object may be named by several
+    /// registrations (see <see cref="TrackHostedServicesFromRegistrations"/>).
+    /// </summary>
+    /// <remarks>Guarded by <see cref="_hostingLock"/>: written by the start pass, read by the stop pass.</remarks>
+    private List<StartedHostedSvc>? _startedHostedServices;
+
+    /// <summary>
+    /// One hosted registration that finished its start sequence: the registration that started it,
+    /// the object it started, and that registration's position in <see cref="_hostedRegistrations"/> —
+    /// the position used to tell N registrations of one type apart in diagnostics.
+    /// </summary>
+    private readonly record struct StartedHostedSvc(
+        SvcRuntimeRegistration Registration,
+        object Instance,
+        int RegistrationIndex,
+        int RegistrationCount
+    );
+
     // Long-lived scope for resolving hosted services. Created lazily on first
     // use and disposed with the container. This prevents scoped dependencies
     // captured by hosted singletons from being disposed when a temporary
@@ -54,7 +76,13 @@ public sealed partial class SvcContainer
         Dictionary<Type, List<SvcRuntimeRegistration>> cache
     )
     {
-        var lastByType = new Dictionary<Type, SvcRuntimeRegistration>();
+        // Identity is the REGISTRATION, not the service type. A hosted type may be registered
+        // more than once — two instances, two factories, the same implementation registered twice
+        // with different configuration — and every one of those registrations is a live service
+        // that must start and stop. Keeping only the last registration per type silently dropped
+        // the earlier ones: they never started and never stopped, and the host still reported a
+        // successful start.
+        List<SvcRuntimeRegistration>? hosted = null;
         foreach (var (_, registrations) in cache)
         {
             foreach (var registration in registrations)
@@ -70,19 +98,21 @@ public sealed partial class SvcContainer
                     );
                 }
 
-                lastByType[registration.ServiceType] = registration;
+                // Start order is per-type group, then registration order inside the group: this
+                // list is built by walking `cache`, a Dictionary<Type, List<...>>, so registering
+                // A1, B, A2 starts a1, a2, b — NOT a1, b, a2. The stop pass does not re-walk it;
+                // it walks the start-ordered _startedHostedServices backwards, so stop is the exact
+                // reverse of start whatever the grouping is (rev-hosted-dedup finding 3).
+                (hosted ??= []).Add(registration);
             }
         }
 
-        if (lastByType.Count > 0)
-            Volatile.Write(
-                ref _hostedRegistrations,
-                new List<SvcRuntimeRegistration>(lastByType.Values)
-            );
+        if (hosted is not null)
+            Volatile.Write(ref _hostedRegistrations, hosted);
     }
 
     /// <summary>
-    /// Starts all registered hosted services in registration order.
+    /// Starts all registered hosted services in tracked-registration order.
     /// Each service is a one-shot: once started, it cannot be restarted
     /// without creating a new container.
     /// </summary>
@@ -133,11 +163,21 @@ public sealed partial class SvcContainer
         if (registrations is null or { Count: 0 })
             return;
 
-        // Services whose start sequence completed, in start order. The rollback walks it
-        // backwards, so it sees exactly the services that are actually up.
-        var started = new List<(SvcRuntimeRegistration Registration, object Instance)>();
+        // Services whose start sequence completed, in start order, kept as container state so the
+        // stop pass reverses the same order it saw. A local used to be enough because the stop pass
+        // re-walked the registration list instead — which stops a shared instance at its LAST
+        // registration while it started at its FIRST (rev-hosted-dedup finding 1).
+        var started = new List<StartedHostedSvc>(registrations.Count);
+        _startedHostedServices = started;
 
-        // Iterate in registration order (forward) — matches IHostedService contract.
+        // One start per object. Two registrations can hand back the same instance (the same
+        // object registered twice): starting it twice would be a second start on a service that
+        // is already running, while the stop pass runs at most once per instance — start and stop
+        // would then be asymmetric.
+        var startedInstances = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+        // Iterate in start order (forward) — matches the IHostedService contract; the stop pass
+        // walks this same list backwards.
         for (int i = 0; i < registrations.Count; i++)
         {
             var registration = registrations[i];
@@ -150,8 +190,14 @@ public sealed partial class SvcContainer
                 if (instance is null)
                 {
                     _hostingScope ??= (SvcScope)CreateScope();
-                    instance = _hostingScope.GetService(registration.ServiceType);
+                    // Resolve THIS registration's instance. Resolving by service type answers
+                    // with the last registration's singleton, which would start that one twice
+                    // and leave the other registration's instance never started.
+                    instance = _hostingScope.ResolveRegistrationInstance(registration);
                 }
+
+                if (!startedInstances.Add(instance))
+                    continue;
 
                 if (instance is IHostedLifecycleSvc lifecycle)
                 {
@@ -168,15 +214,17 @@ public sealed partial class SvcContainer
                     await hosted.StartAsync(cancellationToken).ConfigureAwait(false);
                 }
 
-                started.Add((registration, instance));
+                started.Add(new StartedHostedSvc(registration, instance, i, registrations.Count));
             }
             catch (Exception ex)
             {
                 // Diagnostic channel first — it used to be the ONLY channel, which is
                 // what made a failed start report success (review-2026-11-02 finding 2).
+                // The label names the registration's position, so N registrations of one type
+                // do not produce N byte-identical messages (rev-hosted-dedup finding 4).
                 OnError?.Invoke(
                     ex,
-                    $"Error in {phase} phase of hosted service '{registration.ServiceType.FullName}'"
+                    $"Error in {phase} phase of {DescribeRegistration(registration, i, registrations.Count)}"
                 );
 
                 // The service whose start threw is not stopped: its StartAsync never
@@ -209,28 +257,25 @@ public sealed partial class SvcContainer
     /// The host is left <i>stopped</i> — a later <c>StopAsync</c>/<c>DisposeAsync</c> must not run
     /// a second stop over services that are already down.
     /// </remarks>
-    private async ValueTask RollBackStartedServicesAsync(
-        List<(SvcRuntimeRegistration Registration, object Instance)> started
-    )
+    private async ValueTask RollBackStartedServicesAsync(List<StartedHostedSvc> started)
     {
         using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
         var stopFailures = new List<Exception>();
 
         for (int i = started.Count - 1; i >= 0; i--)
         {
-            var (registration, instance) = started[i];
-            if (!_stoppedHostedInstances.Add(instance))
+            var entry = started[i];
+            if (!_stoppedHostedInstances.Add(entry.Instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cts.Token, stopFailures)
-                .ConfigureAwait(false);
+            await StopInstanceAsync(entry, cts.Token, stopFailures).ConfigureAwait(false);
         }
 
         Interlocked.Exchange(ref _hostedState, 2);
     }
 
     /// <summary>
-    /// Stops all registered hosted services in reverse registration order (LIFO).
+    /// Stops every started hosted service in reverse <i>start</i> order (LIFO).
     /// Each service is a one-shot: once stopped, it cannot be restarted
     /// without creating a new container.
     /// </summary>
@@ -256,28 +301,28 @@ public sealed partial class SvcContainer
 
     private async Task StopHostedServicesCoreAsync(CancellationToken cancellationToken)
     {
-        var registrations = Volatile.Read(ref _hostedRegistrations);
-        if (registrations is null or { Count: 0 })
+        // The list the start pass built: every started registration, in start order. The
+        // registration list is the wrong list to walk — it is grouped by service type and names a
+        // shared object once per registration, so reversing it stops that object at its LAST
+        // registration position while a later-started service is still running
+        // (rev-hosted-dedup finding 1).
+        var started = _startedHostedServices;
+        if (started is null or { Count: 0 })
             return;
 
         var failures = new List<Exception>();
 
-        // Iterate in reverse order (LIFO) — matches IHostedService contract.
-        for (int i = registrations.Count - 1; i >= 0; i--)
+        // Iterate in reverse START order (LIFO) — matches IHostedService contract.
+        for (int i = started.Count - 1; i >= 0; i--)
         {
-            var registration = registrations[i];
-
-            var instance = registration.GetSingletonInstance();
-            if (instance is null)
-                continue;
+            var entry = started[i];
 
             // At most one stop sequence per instance: a rolled-back start or a StopAsync
             // that was already queued on the hosting lock must not stop a service twice.
-            if (!_stoppedHostedInstances.Add(instance))
+            if (!_stoppedHostedInstances.Add(entry.Instance))
                 continue;
 
-            await StopInstanceAsync(registration, instance, cancellationToken, failures)
-                .ConfigureAwait(false);
+            await StopInstanceAsync(entry, cancellationToken, failures).ConfigureAwait(false);
         }
 
         if (failures.Count > 0)
@@ -298,51 +343,65 @@ public sealed partial class SvcContainer
     /// remaining phases still run — same fault isolation as before, minus the swallowing.
     /// </summary>
     private async Task StopInstanceAsync(
-        SvcRuntimeRegistration registration,
-        object instance,
+        StartedHostedSvc started,
         CancellationToken cancellationToken,
         List<Exception> failures
     )
     {
-        if (instance is IHostedLifecycleSvc lifecycle)
+        var label = DescribeRegistration(
+            started.Registration,
+            started.RegistrationIndex,
+            started.RegistrationCount
+        );
+
+        if (started.Instance is IHostedLifecycleSvc lifecycle)
         {
             await StopPhaseAsync(
                     "Stopping",
-                    registration,
+                    label,
                     () => lifecycle.StoppingAsync(cancellationToken),
                     failures
                 )
                 .ConfigureAwait(false);
             await StopPhaseAsync(
                     "Stop",
-                    registration,
+                    label,
                     () => lifecycle.StopAsync(cancellationToken),
                     failures
                 )
                 .ConfigureAwait(false);
             await StopPhaseAsync(
                     "Stopped",
-                    registration,
+                    label,
                     () => lifecycle.StoppedAsync(cancellationToken),
                     failures
                 )
                 .ConfigureAwait(false);
         }
-        else if (instance is IHostedSvc hosted)
+        else if (started.Instance is IHostedSvc hosted)
         {
-            await StopPhaseAsync(
-                    "Stop",
-                    registration,
-                    () => hosted.StopAsync(cancellationToken),
-                    failures
-                )
+            await StopPhaseAsync("Stop", label, () => hosted.StopAsync(cancellationToken), failures)
                 .ConfigureAwait(false);
         }
     }
 
+    /// <summary>
+    /// Diagnostic label for one hosted registration: the service type plus the registration's
+    /// position in the tracked list. Without the position, N registrations of one type produce N
+    /// byte-identical messages (rev-hosted-dedup finding 4). Only the registered service type is
+    /// named — never the resolved instance's runtime type, which may be an internal decorator, so
+    /// nothing internal leaks into a message the caller can see.
+    /// </summary>
+    private static string DescribeRegistration(
+        SvcRuntimeRegistration registration,
+        int registrationIndex,
+        int registrationCount
+    ) =>
+        $"hosted service '{registration.ServiceType.FullName}' (registration {registrationIndex + 1} of {registrationCount})";
+
     private async Task StopPhaseAsync(
         string phase,
-        SvcRuntimeRegistration registration,
+        string serviceLabel,
         Func<Task> action,
         List<Exception> failures
     )
@@ -353,10 +412,7 @@ public sealed partial class SvcContainer
         }
         catch (Exception ex)
         {
-            OnError?.Invoke(
-                ex,
-                $"Error in {phase} phase of hosted service '{registration.ServiceType.FullName}'"
-            );
+            OnError?.Invoke(ex, $"Error in {phase} phase of {serviceLabel}");
             failures.Add(ex);
         }
     }

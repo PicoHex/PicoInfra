@@ -255,11 +255,10 @@ public class HostedSvcTests
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
         var svc = new CountingHostedSvc();
 
-        // Register same service type twice. The hosted tracking list collects both registrations,
-        // but singleton resolution only uses the last one (last wins). Before the fix,
-        // StartHostedServicesAsync iterates both entries — the first resolve-through-last
-        // creates the instance and starts it, then the second entry finds the instance
-        // already materialized and calls StartAsync again on the same instance.
+        // Register the SAME INSTANCE twice. Both registrations are tracked (identity is the
+        // registration, not the type), so the start pass reaches the object twice — the
+        // one-start-per-object guard is what keeps it to a single StartAsync, and the
+        // one-stop-per-instance guard keeps it to a single StopAsync.
         container.RegisterHostedSvc<CountingHostedSvc>(_ => svc);
         container.RegisterHostedSvc<CountingHostedSvc>(_ => svc);
         container.Build();
