@@ -159,7 +159,12 @@ public class LifecycleSvcTests
 
         await using var scope = container.CreateScope();
         var resolved = scope.GetService<LifecycleTestSvc>();
-        await Assert.That(resolved!.Calls).IsEquivalentTo(new[] { "Starting", "Start", "Started" });
+        // Sequence, not membership: the default comparison is a set, which cannot tell
+        // Starting → Start → Started from Starting → Started → Start — the start chain could be
+        // reordered with this test green (review-2026-11-02 test-validity finding 3).
+        await Assert
+            .That(resolved!.Calls)
+            .IsEquivalentTo(new[] { "Starting", "Start", "Started" }, CollectionOrdering.Matching);
     }
 
     [Test]
@@ -176,10 +181,13 @@ public class LifecycleSvcTests
 
         await using var scope = container.CreateScope();
         var resolved = scope.GetService<LifecycleTestSvc>();
+        // Both chains are pinned as sequences: the start chain Starting → Start → Started and
+        // the stop chain Stopping → Stop → Stopped (review-2026-11-02 test-validity finding 3).
         await Assert
             .That(resolved!.Calls)
             .IsEquivalentTo(
-                new[] { "Starting", "Start", "Started", "Stopping", "Stop", "Stopped" }
+                new[] { "Starting", "Start", "Started", "Stopping", "Stop", "Stopped" },
+                CollectionOrdering.Matching
             );
     }
 
@@ -233,8 +241,16 @@ public class LifecycleSvcTests
 
         await host.StartAsync();
 
-        await Assert.That(svcA.Calls).IsEquivalentTo(new[] { "Starting", "Start", "Started" });
-        await Assert.That(svcB.Calls).IsEquivalentTo(new[] { "Starting", "Start", "Started" });
+        // Each service's phase chain is pinned as a sequence. The cross-service half of the
+        // name (A finishes before B starts) is pinned in HostingIntegrationTests by
+        // MultipleLifecycleServices_StartInRegistrationOrder, whose markers carry the service
+        // name — two per-service lists cannot see which of them went first.
+        await Assert
+            .That(svcA.Calls)
+            .IsEquivalentTo(new[] { "Starting", "Start", "Started" }, CollectionOrdering.Matching);
+        await Assert
+            .That(svcB.Calls)
+            .IsEquivalentTo(new[] { "Starting", "Start", "Started" }, CollectionOrdering.Matching);
     }
 
     [Test]
