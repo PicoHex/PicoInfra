@@ -263,6 +263,8 @@ Startup order follows registration order. Shutdown reverses it (LIFO). Each host
 
 **`new SvcHost(container)` needs no explicit `Build()` (behaviour change).** `StartAsync` builds the container first — the same lazy build `CreateScope()` performs — because `Build()` is what collects the hosted-service registrations. Without it, a host over a container that had not been built started nothing and still consumed its one-shot start, so even after a later `Build()` a second `StartAsync` started nothing (silently). `Build()` freezes the registrations, so register every service before the first `StartAsync`; on a disposed container `StartAsync` throws `ObjectDisposedException` and the one-shot start is *not* consumed. `SvcHostBuilder.BuildAsync` is unaffected — it already builds explicitly.
 
+**`BuildAsync`'s cancellation token belongs to the hosted services, not to the builder.** `SvcHostBuilder.BuildAsync(ct)` forwards `ct` to every hosted service's `StartAsync` (or `StartingAsync`/`StartAsync`/`StartedAsync`) and does **not** pre-check it: a service that honours an already-cancelled token faults the build with its own `OperationCanceledException` — `BuildAsync` disposes the container and rethrows — while a service that ignores the token still starts and `BuildAsync` returns a started host with the cancelled token visible to that service. That is the same division as `Microsoft.Extensions.Hosting`, where `Host.StartAsync` hands the token to the hosted services and `HostedServiceExecutor` does not check it on its own. A cancelled token therefore does not by itself abort a build; only a service that observes it does.
+
 ## Interceptor / AOP (Compile-Time Decorators)
 
 PicoDI.Gen is **embedded** in PicoDI.Abs and runs automatically — no separate
