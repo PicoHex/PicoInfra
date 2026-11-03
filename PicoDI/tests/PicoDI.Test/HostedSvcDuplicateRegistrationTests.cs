@@ -1,13 +1,18 @@
 namespace PicoDI.Test;
 
 /// <summary>
-/// A hosted service registered more than once under the <b>same</b> service type must be tracked
-/// per <i>registration</i>, not per type. Collecting one registration per type dropped the earlier
-/// ones: one instance never started and never stopped, and the container reported success.
+/// A hosted service registered more than once must be tracked per <i>registration</i>, not per type —
+/// two instances, two factories, or one instance shared by two registrations. Collecting one
+/// registration per type dropped the earlier ones: they never started and never stopped, and the
+/// container still reported a successful start.
 /// </summary>
 public class HostedSvcDuplicateRegistrationTests
 {
-    private sealed class RecordingHostedSvc(string name, List<string> log) : IHostedSvc
+    private interface IOtherHostedSvc : IHostedSvc;
+
+    private sealed class RecordingHostedSvc(string name, List<string> log)
+        : IHostedSvc,
+            IOtherHostedSvc
     {
         public int StartCount { get; private set; }
         public int StopCount { get; private set; }
@@ -56,6 +61,30 @@ public class HostedSvcDuplicateRegistrationTests
         await Assert.That(first.StopCount).IsEqualTo(1);
         await Assert.That(second.StartCount).IsEqualTo(1);
         await Assert.That(second.StopCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task OneInstance_RegisteredUnderTwoHostedServiceTypes_StartsAndStopsOnce()
+    {
+        // Two registrations, two service types, ONE object. The start pass reaches that object
+        // through both registrations; running its start twice would be a second start on a
+        // service that is already running, while stops run at most once per instance — start and
+        // stop stay symmetric at one each.
+        var log = new List<string>();
+        var shared = new RecordingHostedSvc("shared", log);
+
+        await using var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.RegisterHostedSvc<RecordingHostedSvc>(_ => shared);
+        container.RegisterHostedSvc<IOtherHostedSvc>(_ => shared);
+        container.Build();
+        var host = new SvcHost(container);
+
+        await host.StartAsync();
+        await host.StopAsync();
+
+        await Assert.That(string.Join(", ", log)).IsEqualTo("start:shared, stop:shared");
+        await Assert.That(shared.StartCount).IsEqualTo(1);
+        await Assert.That(shared.StopCount).IsEqualTo(1);
     }
 
     [Test]
