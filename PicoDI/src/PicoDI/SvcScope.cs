@@ -23,9 +23,12 @@ public sealed partial class SvcScope : ISvcScope
     private object? _lastSingletonInstance;
 
     // Scoped instances: ConcurrentDictionary with Lazy<T>(ExecutionAndPublication).
-    // The Lazy wrapper ensures the factory is called at most once, even under
-    // contention where ConcurrentDictionary.GetOrAdd may invoke the valueFactory
-    // multiple times. Discarded Lazy wrappers are lightweight and never execute.
+    // The Lazy wrapper ensures the factory is called at most once per *successful*
+    // construction, even under contention where ConcurrentDictionary.GetOrAdd may
+    // invoke the valueFactory multiple times. Discarded Lazy wrappers are lightweight
+    // and never execute. An entry whose factory threw is removed again by
+    // GetOrAddScopedInstance, because Lazy caches the exception too — see the
+    // retry/eviction note there.
     private ConcurrentDictionary<SvcRuntimeRegistration, Lazy<object>>? _scopedInstances;
 
     // Tracks creation order of scoped instances within this scope.

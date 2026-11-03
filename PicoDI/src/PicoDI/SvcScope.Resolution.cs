@@ -296,6 +296,16 @@ public sealed partial class SvcScope
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private long NextScopedCreationOrder() => Interlocked.Increment(ref _scopedCreationCounter);
 
+    /// <summary>
+    /// Resolves the scope-local instance of <paramref name="registration"/>, creating it at most once
+    /// per <i>successful</i> construction.
+    /// </summary>
+    /// <remarks>
+    /// "At most once" is deliberately weaker than "exactly once per scope": a factory that throws has
+    /// its <see cref="Lazy{T}"/> entry evicted, so the next resolve retries it instead of rethrowing
+    /// the cached failure forever. A successful instance is cached for the scope's lifetime and
+    /// disposed exactly once.
+    /// </remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private object GetOrAddScopedInstance(SvcRuntimeRegistration registration)
     {
@@ -384,7 +394,26 @@ public sealed partial class SvcScope
             )
         );
 
-        var instance = lazy.Value;
+        object instance;
+        try
+        {
+            instance = lazy.Value;
+        }
+        catch
+        {
+            // A failed construction is evicted, not cached. Lazy<T> in ExecutionAndPublication
+            // caches the exception for its whole lifetime, so the entry left behind would rethrow
+            // the first failure on every later resolve of this service in this scope — one
+            // transient fault (or one correctly rejected cycle) would poison the scope for good.
+            // Removing *this* entry only: TryRemove(KeyValuePair) compares the value, so a Lazy
+            // another thread installed meanwhile (possibly already successful) survives. The next
+            // resolve builds a fresh Lazy and runs the factory again — a scoped factory with side
+            // effects may therefore run more than once per scope, which the README states.
+            instances.TryRemove(
+                new KeyValuePair<SvcRuntimeRegistration, Lazy<object>>(registration, lazy)
+            );
+            throw;
+        }
 
         if (Volatile.Read(ref _disposed) != 0)
         {
