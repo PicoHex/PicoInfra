@@ -41,15 +41,18 @@ internal static class PicoAopDiag
     );
 
     /// <summary>
-    /// A member shape the proxy can implement but cannot intercept (indexer,
-    /// event, ref-returning method, ref struct or pointer parameter). The member
-    /// is emitted as a direct pass-through so the generated proxy still
-    /// compiles.
+    /// A member shape the proxy cannot intercept. Whether the member is still
+    /// emitted as a pass-through, and where its calls then run, differs by cause
+    /// and is stated by the reason clause: an interface member is emitted and
+    /// forwarded to the inner instance, while a member of a class service that a
+    /// derived proxy cannot override is reached on the inherited implementation
+    /// in the proxy instance — the emitted <c>new</c> pass-through is unreachable
+    /// for a consumer, because <c>Wrap_*</c> returns the service type.
     /// </summary>
     public static readonly DiagnosticDescriptor MemberDelegated = new(
         "PICO111",
-        "Member cannot be intercepted and is delegated",
-        "Member '{0}' on '{1}' cannot be intercepted ({2}) and is delegated directly to the inner instance",
+        "Member cannot be intercepted",
+        "Member '{0}' on '{1}' cannot be intercepted ({2})",
         Category,
         DiagnosticSeverity.Warning,
         isEnabledByDefault: true

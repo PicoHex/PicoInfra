@@ -99,7 +99,7 @@ internal static class ServicePlanner
     /// decorated call can never reach the chain.
     /// </summary>
     internal const string NotOverridableReason =
-        "a member of a class that a derived proxy cannot override (not virtual, or sealed)";
+        "a non-virtual or sealed member of a class, which a derived proxy cannot override; calls execute on the inherited implementation, and the emitted pass-through is never reached";
 
     /// <summary>
     /// Whether a derived proxy can route this member. Only class services care:
@@ -168,7 +168,7 @@ internal static class ServicePlanner
                     Location.None,
                     @event.Name,
                     service.Name,
-                    "an event"
+                    "an event; add and remove are forwarded to the inner instance"
                 )
             );
             planned.Add(
@@ -178,7 +178,7 @@ internal static class ServicePlanner
                     null,
                     @event,
                     MemberEmission.Delegated,
-                    "event"
+                    "event; forwarded to the inner instance"
                 )
             );
         }
@@ -233,25 +233,35 @@ internal static class ServicePlanner
         }
 
         if (method.ReturnsByRef || method.ReturnsByRefReadonly)
-            return Delegated(service, method, diagnostics, "a ref return");
+            return Delegated(
+                service,
+                method,
+                diagnostics,
+                "a ref return; the call is passed straight to the inner instance"
+            );
 
         if (method.ReturnType.IsRefLikeType || method.Parameters.Any(p => p.Type.IsRefLikeType))
             return Delegated(
                 service,
                 method,
                 diagnostics,
-                "a ref struct parameter or return value"
+                "a ref struct parameter or return value; the call is passed straight to the inner instance"
             );
 
         if (IsUnsafeType(method.ReturnType) || method.Parameters.Any(p => IsUnsafeType(p.Type)))
-            return Delegated(service, method, diagnostics, "a pointer parameter or return value");
+            return Delegated(
+                service,
+                method,
+                diagnostics,
+                "a pointer parameter or return value; the call is passed straight to the inner instance"
+            );
 
         if (method.TypeParameters.Any(tp => tp.AllowsRefLikeType))
             return Delegated(
                 service,
                 method,
                 diagnostics,
-                "a type parameter that allows ref struct"
+                "a type parameter that allows ref struct; the call is passed straight to the inner instance"
             );
 
         return Intercepted();
@@ -274,7 +284,7 @@ internal static class ServicePlanner
                     Location.None,
                     "this[]",
                     service.Name,
-                    "an indexer"
+                    "an indexer; the access is passed straight to the inner instance"
                 )
             );
             return intercepted.DelegateTo("indexer");
@@ -302,7 +312,7 @@ internal static class ServicePlanner
                     Location.None,
                     property.Name,
                     service.Name,
-                    "a ref struct or pointer property type"
+                    "a ref struct or pointer property type; the access is passed straight to the inner instance"
                 )
             );
             return intercepted.DelegateTo("ref struct property type");
@@ -430,7 +440,7 @@ internal static class ServicePlanner
 
                 return delegatedMembers.Contains(member) && mapped.IsIntercepted
                     ? mapped.DelegateTo(
-                        "another member of a different base interface owns the same name and parameters"
+                        "another member of a different base interface owns the same name and parameters; the call is passed straight to the inner instance"
                     )
                     : mapped;
             }),
@@ -544,7 +554,7 @@ internal static class ServicePlanner
             .. planned.Select(member =>
                 colliding.Contains(member)
                     ? member.DelegateTo(
-                        "its generated invocation name collides with another member"
+                        "its generated invocation name collides with another member; the call is not routed"
                     )
                     : member
             ),

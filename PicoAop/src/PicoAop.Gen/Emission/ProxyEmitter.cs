@@ -354,10 +354,12 @@ internal static class ProxyEmitter
     /// How a generated member is declared, including its trailing space. On a
     /// class service an overridable member is <c>override</c>n (that is what
     /// routes the call); a member the proxy cannot override is emitted with
-    /// <c>new</c>, so the hiding is deliberate — the pass-through body still
-    /// reaches the inner instance, without the CS0108 warning that lands in a
-    /// file the consumer cannot edit. An explicit interface implementation
-    /// takes no access modifier at all.
+    /// <c>new</c>, so the hiding is deliberate — no CS0108 warning lands in a
+    /// file the consumer cannot edit. That pass-through is unreachable in
+    /// practice: <c>Wrap_*</c> returns the service type and the proxy type is
+    /// internal, so a caller binds to the inherited implementation and the call
+    /// runs on the proxy instance, never on <c>_inner</c> (PICO111 says so). An
+    /// explicit interface implementation takes no access modifier at all.
     /// </summary>
     private static string Modifier(PlannedMember member, bool isClassType)
     {

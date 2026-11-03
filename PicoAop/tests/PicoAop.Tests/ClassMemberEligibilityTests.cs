@@ -189,6 +189,80 @@ public class ClassMemberEligibilityTests : GeneratorTestBase
         await Assert.That(result.WarningText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// PICO111 used to end every message with "and is delegated directly to the
+    /// inner instance", which is false for a class service: a caller holding the
+    /// service type binds to the inherited implementation on the *proxy*
+    /// instance, so the state it mutates is the proxy's own copy — the emitted
+    /// <c>new</c> pass-through that does reach <c>_inner</c> is never called by
+    /// anyone (review-2026-11-02/rev-aop-3c.md, D4; probe P6:
+    /// <c>after Inc -&gt; proxy.N=1 inner.N=0</c>).
+    /// </summary>
+    [Test]
+    public async Task NonVirtualClassMember_RunsOnTheInheritedImplementation_NotOnTheInnerInstance()
+    {
+        var assembly = CompileAndLoad(
+            Preamble
+                + """
+
+                public class Svc
+                {
+                    public int N;
+                    public int VN;
+                    public void Inc() { N++; }
+                    public virtual void VInc() { VN++; }
+                }
+                """,
+            out var result
+        );
+        var proxy = CreateProxy(assembly);
+        var proxyType = proxy.GetType();
+        var svcType = assembly.GetType("Svc")!;
+        var inner = proxyType
+            .GetField(
+                "_inner",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+            )!
+            .GetValue(proxy)!;
+
+        // A consumer can only hold the service type (`Wrap_*` returns `Svc`), so
+        // this is the call path that exists: the base declaration, invoked on the
+        // proxy instance.
+        svcType.GetMethod("Inc")!.Invoke(proxy, []);
+        svcType.GetMethod("VInc")!.Invoke(proxy, []);
+
+        var proxyN = (int)proxyType.GetField("N")!.GetValue(proxy)!;
+        var innerN = (int)svcType.GetField("N")!.GetValue(inner)!;
+        var proxyVN = (int)proxyType.GetField("VN")!.GetValue(proxy)!;
+        var innerVN = (int)svcType.GetField("VN")!.GetValue(inner)!;
+        Console.WriteLine($"after Inc  -> proxy.N={proxyN} inner.N={innerN}");
+        Console.WriteLine($"after VInc -> proxy.VN={proxyVN} inner.VN={innerVN}");
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // The non-virtual call ran on the proxy instance, not on the inner one.
+        await Assert.That(proxyN).IsEqualTo(1);
+        await Assert.That(innerN).IsEqualTo(0);
+        // The overridable one is routed to the inner instance, as advertised.
+        await Assert.That(proxyVN).IsEqualTo(0);
+        await Assert.That(innerVN).IsEqualTo(1);
+
+        // The pass-through that does reach `_inner` is emitted (this is the
+        // reword fix: the member stays, the message tells the truth about who can
+        // call it) ...
+        await Assert.That(result.GeneratedOutput.Contains("public new void Inc()")).IsTrue();
+
+        // ... so the diagnostic must not claim delegation to the inner instance
+        // for a member a caller reaches on the inherited implementation ...
+        await Assert
+            .That(result.DiagnosticText.Contains("delegated directly to the inner instance"))
+            .IsFalse();
+        // ... and must say what happens instead.
+        await Assert
+            .That(result.DiagnosticText.Contains("calls execute on the inherited implementation"))
+            .IsTrue();
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+    }
+
     private static object CreateProxy(Assembly assembly)
     {
         var proxyType =
