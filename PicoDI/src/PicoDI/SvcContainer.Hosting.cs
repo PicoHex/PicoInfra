@@ -238,7 +238,26 @@ public sealed partial class SvcContainer
     /// One or more stop phases failed. Every service is still stopped before this is thrown; the
     /// individual failures are also reported to <see cref="OnError"/>.
     /// </exception>
+    /// <exception cref="ObjectDisposedException">
+    /// The container has already been disposed — symmetric with
+    /// <see cref="StartHostedServicesAsync"/>, which faults through its lazy <c>Build()</c>.
+    /// Disposal has already run the single stop pass, so a normal return here would be
+    /// indistinguishable from a shutdown that really happened (review-2026-11-02 defect L4).
+    /// </exception>
     internal async Task StopHostedServicesAsync(CancellationToken cancellationToken = default)
+    {
+        DisposalGuards.ThrowIfDisposed(ref _disposed, nameof(SvcContainer));
+
+        await StopHostedServicesOnceAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The single stop pass: consumes the one-shot state, serializes on the hosting lock and runs
+    /// the LIFO stop. Split out of <see cref="StopHostedServicesAsync(CancellationToken)"/> so the
+    /// disposal path can run it without the disposed guard — <see cref="DisposeAsync"/> sets the
+    /// flag it would be checking, and a disposal path never throws.
+    /// </summary>
+    private async Task StopHostedServicesOnceAsync(CancellationToken cancellationToken)
     {
         if (!TryTransitionToStopped())
             return;
@@ -366,7 +385,7 @@ public sealed partial class SvcContainer
         using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
         try
         {
-            await StopHostedServicesAsync(cts.Token).ConfigureAwait(false);
+            await StopHostedServicesOnceAsync(cts.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
