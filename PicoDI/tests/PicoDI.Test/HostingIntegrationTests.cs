@@ -177,7 +177,7 @@ public class HostingIntegrationTests
     #region Exception Isolation Tests
 
     [Test]
-    public async Task StartAsync_ExceptionDoesNotBlockOthers()
+    public async Task StartAsync_ExceptionAbortsStart_AndLaterServicesNeverStart()
     {
         // Arrange
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
@@ -188,15 +188,19 @@ public class HostingIntegrationTests
         container.Build();
         var host = new SvcHost(container);
 
-        // Act — should not throw (hosting catches per-service exceptions)
-        await host.StartAsync();
+        // Act — review-2026-11-02 finding 2: the failure faults the caller. It used to be
+        // swallowed into OnError (default null) and the start reported success.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
+        await Assert.That(ex.Message).IsEqualTo("Start failed");
 
-        // Assert — normal service still started despite the failing one
-        await Assert.That(trackingSvc.Started).IsTrue();
+        // Assert — the service after the failing one is never started, and nothing is stopped:
+        // the failing service's StartAsync never completed, so it is not stopped either.
+        await Assert.That(trackingSvc.Started).IsFalse();
+        await Assert.That(trackingSvc.Stopped).IsFalse();
     }
 
     [Test]
-    public async Task StopAsync_ExceptionDoesNotBlockOthers()
+    public async Task StopAsync_ExceptionStillStopsOthers_ButFaultsTheCaller()
     {
         // Arrange
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
@@ -210,8 +214,11 @@ public class HostingIntegrationTests
         // Materialize singletons first
         await host.StartAsync();
 
-        // Act — should not throw (hosting catches per-service exceptions)
-        await host.StopAsync();
+        // Act — every service is still stopped (shutdown stays fault-tolerant), but the failure
+        // reaches the caller as an AggregateException (finding 2, stop half).
+        var ex = await Assert.ThrowsAsync<AggregateException>(() => host.StopAsync());
+        await Assert.That(ex.InnerExceptions.Count).IsEqualTo(1);
+        await Assert.That(ex.InnerExceptions[0].Message).IsEqualTo("Stop failed");
 
         // Assert — normal service still stopped despite the failing one
         await Assert.That(trackingSvc.Stopped).IsTrue();
@@ -618,9 +625,9 @@ public class HostingIntegrationTests
     #region Lifecycle Exception Isolation Tests
 
     [Test]
-    public async Task LifecycleService_ExceptionDoesNotBlockSubsequentPhases()
+    public async Task LifecycleService_ExceptionInStartPhase_AbortsTheRemainingPhases()
     {
-        // Arrange — StartingAsync throws, but StartAsync should still run
+        // Arrange — StartingAsync throws, so StartAsync/StartedAsync must not run
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
         var svc = new FailingLifecyclePhaseSvc("Starting");
 
@@ -628,15 +635,16 @@ public class HostingIntegrationTests
         container.Build();
         var host = new SvcHost(container);
 
-        // Act — should not throw
-        await host.StartAsync();
+        // Act — finding 2: the failed start faults the caller
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
+        await Assert.That(ex.Message).IsEqualTo("Fail:Starting");
 
-        // Assert — subsequent phase (StartAsync) still ran
-        await Assert.That(svc.SubsequentPhaseRun).IsTrue();
+        // Assert — the phase chain stopped at the failing phase
+        await Assert.That(svc.SubsequentPhaseRun).IsFalse();
     }
 
     [Test]
-    public async Task LifecycleService_ExceptionDoesNotBlockOtherServices()
+    public async Task LifecycleService_StartExceptionAbortsLaterServices()
     {
         // Arrange
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
@@ -648,15 +656,16 @@ public class HostingIntegrationTests
         container.Build();
         var host = new SvcHost(container);
 
-        // Act — should not throw
-        await host.StartAsync();
+        // Act — finding 2: the failure faults the caller instead of reporting success
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
+        await Assert.That(ex.Message).IsEqualTo("Fail:Start");
 
-        // Assert — the second service started despite the first failing
-        await Assert.That(trackingSvc.Started).IsTrue();
+        // Assert — the second service never started
+        await Assert.That(trackingSvc.Started).IsFalse();
     }
 
     [Test]
-    public async Task LifecycleService_StopExceptionDoesNotBlockOtherServices()
+    public async Task LifecycleService_StopExceptionStillStopsOtherServices_ButFaultsTheCaller()
     {
         // Arrange
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
@@ -670,8 +679,10 @@ public class HostingIntegrationTests
 
         await host.StartAsync();
 
-        // Act — should not throw
-        await host.StopAsync();
+        // Act — finding 2, stop half: shutdown stays fault-tolerant, but the failure reaches
+        // the caller as an AggregateException.
+        var ex = await Assert.ThrowsAsync<AggregateException>(() => host.StopAsync());
+        await Assert.That(ex.InnerExceptions[0].Message).IsEqualTo("Fail:Stop");
 
         // Assert — the second service stopped despite the first failing
         await Assert.That(trackingSvc.Stopped).IsTrue();

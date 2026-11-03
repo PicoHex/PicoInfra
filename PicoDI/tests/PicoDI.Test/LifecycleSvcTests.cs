@@ -184,7 +184,7 @@ public class LifecycleSvcTests
     }
 
     [Test]
-    public async Task Lifecycle_ExceptionInStarting_StillCallsStart()
+    public async Task Lifecycle_ExceptionInStarting_AbortsTheStartSequence()
     {
         await using var container = new SvcContainer(autoConfigureFromGenerator: false);
         var svc = new FaultyStartingLifecycleSvc();
@@ -192,13 +192,15 @@ public class LifecycleSvcTests
         container.Build();
         var host = new SvcHost(container);
 
-        await host.StartAsync();
+        // review-2026-11-02 finding 2: the failure faults the caller (it used to be swallowed
+        // into OnError, default null) and the phase chain stops at the failing phase.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.StartAsync());
+        await Assert.That(ex.Message).IsEqualTo("StartingAsync failed on purpose");
 
         await using var scope = container.CreateScope();
         var resolved = scope.GetService<FaultyStartingLifecycleSvc>();
 
-        await Assert.That(resolved!.Calls).Contains("Start");
-        await Assert.That(resolved.Calls).Contains("Started");
+        await Assert.That(resolved!.Calls).IsEquivalentTo(new[] { "Starting" });
     }
 
     [Test]

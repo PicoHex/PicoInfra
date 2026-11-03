@@ -102,14 +102,12 @@ public class HostBuilderTests
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
-        await using var host = await builder.BuildAsync(cts.Token);
-
-        await Assert.That(host).IsNotNull();
-
-        await using var scope = host.Services.CreateScope();
-        var hosted = scope.GetService<TestHostedSvc>();
-        await Assert.That(hosted).IsNotNull();
-        await Assert.That(hosted!.Started).IsFalse();
+        // review-2026-11-02 finding 2: a start that is cancelled is a failed start. It used to
+        // be swallowed into OnError (default null), and BuildAsync handed back a "started" host
+        // whose hosted service had never started.
+        await Assert
+            .That(async () => await builder.BuildAsync(cts.Token))
+            .Throws<OperationCanceledException>();
     }
 
     [Test]

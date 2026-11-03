@@ -242,6 +242,16 @@ await host.StopAsync();
 
 Startup order follows registration order. Shutdown reverses it (LIFO). Each hosted service is a one-shot — once stopped, it cannot be restarted without creating a new container.
 
+**A failed start reaches the caller (behaviour change).** `StartAsync` follows the .NET host contract: when a hosted service's `StartAsync` (or `StartingAsync`/`StartedAsync`) throws, the caller's `StartAsync` faults with that same exception — same type, message and stack trace, not wrapped, so `catch (InvalidOperationException)` around `StartAsync` keeps working. Previously the exception went only to `OnError` (default `null`), so a failed start reported success and `SvcHostBuilder.BuildAsync` handed back a "started" host whose service had never started. The failure also aborts the sequence:
+
+- services registered after the failing one are **not** started;
+- the services that already started are stopped first, in reverse registration order (LIFO) — a failed start must not leave background work running behind a host you were told to throw away;
+- the service whose start threw does **not** receive `StopAsync`: its `StartAsync` never completed, so its state is unknown (the same rule `Microsoft.Extensions.Hosting` applies);
+- the host is left **stopped**: later `StartAsync` / `StopAsync` / `DisposeAsync` calls are no-ops, because the one-shot start was consumed by the failed attempt. `SvcHostBuilder.BuildAsync` disposes the container and rethrows;
+- `OnError` still reports the failure — it is just no longer the only channel.
+
+**A failed stop also reaches the caller (behaviour change).** `StopAsync` keeps its fault-tolerant shutdown — every service is still stopped — and then throws an `AggregateException` carrying the individual failures, the shape `Microsoft.Extensions.Hosting` uses for `Host.StopAsync`. The stop phases run at most once per hosted service instance, so a service is never stopped twice (and never after a failed start). `DisposeAsync` never throws: its internal stop reports to `OnError` instead.
+
 ## Interceptor / AOP (Compile-Time Decorators)
 
 PicoDI.Gen is **embedded** in PicoDI.Abs and runs automatically — no separate
@@ -329,6 +339,12 @@ All wiring is resolved at compile time — zero reflection. See [PicoDI.Sample.A
 - **Scoped factory retry (behaviour change)**: a scoped factory that throws no longer poisons the scope. The failed instance is evicted and a resolve that *starts* after the failure runs the factory again, so a transient failure is retried instead of rethrowing the cached exception forever, and a factory that always throws throws again on every later resolve. This holds for resolves that begin after the failure: a resolve already in flight and blocked on that instance in that scope — the scoped value is a shared `Lazy<T>` — still receives the original exception. A successful scoped instance is still created exactly once and disposed exactly once; the cost of the retry is that a scoped factory with side effects may now run more than once per scope.
 - **Disposed scope/container**: Throws `ObjectDisposedException`.
 - **Source generator not applied**: Throws `SourceGeneratorRequiredException` for type-based registrations.
+
+### Hosted Service Errors
+
+- **Failed start**: the caller's `StartAsync` faults with the service's own exception, the start sequence aborts, the already-started services are stopped (LIFO) and the failing one is not. See [Hosted Services](#svchostbuilder). `SvcHostBuilder.BuildAsync` disposes the container and rethrows.
+- **Failed stop**: `StopAsync` throws an `AggregateException` after every service has been stopped. `DisposeAsync` swallows it into `OnError` — a disposal path never throws.
+- **`OnError` is the diagnostic channel, never the only one**: hosted-service start/stop failures are reported to it *and* propagated (or, on disposal, only reported).
 
 ### Disposal Errors
 
