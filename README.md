@@ -236,7 +236,7 @@ container.AddPicoLog(o => {
   - `ColoredConsoleSink` — Color-coded output per log level (Gray/Cyan/Green/Yellow/Red/Magenta, etc.)
   - `ConsoleSink` — Plain text output
   - `FileSink` — Bounded-channel file writer with file rotation, sync I/O on background thread
-  - `SeqSink` — HTTP batch POST to Seq server with retry, backoff, periodic flush, and optional console fallback — ships in **`PicoLog.Json`** (it serializes JSON), keeping `namespace PicoLog`
+  - `SeqSink` — HTTP batch POST to Seq server with retry, backoff, periodic flush, and optional console fallback — ships in **`PicoLog.Json`** (it serializes JSON), keeping `namespace PicoLog`. Source-compatible after adding that package; an assembly already compiled against `PicoLog` must be recompiled (no type forwarder, no `[Obsolete]` stub — see [`PicoLog/README.md`](PicoLog/README.md#packages))
 - **`ILogFormatter`** — Custom formatter interface. `ConsoleFormatter` uses thread-static `StringBuilder` cache for zero-allocation formatting on hot paths.
 - **`LogEntry`** — Reusable pool object (`LogEntryPool`) for fast-path entries; full allocation for slow path.
 - **Scoped logging** — `LoggerScopeProvider` captures scope state and properties, merges them into every log entry.
@@ -461,7 +461,7 @@ var mediator = scope.GetService<IMediator>();
 | **PicoLog** | Structured logging with sinks (console, colored-console, file) |
 | **PicoLog.Abs** | Logging abstractions (`ILogger`, `ILoggerFactory`, `ILogSink`, `ILogFormatter`, `LogEntry`, `LogLevel`) + embedded `[PicoLogMessage]` generator |
 | **PicoLog.DI** | DI integration — `AddPicoLog(Action<LoggingOptions>)` |
-| **PicoLog.Json** | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter`. `SeqSink` moved here from `PicoLog` — same type, same `namespace PicoLog` |
+| **PicoLog.Json** | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter`. `SeqSink` moved here from `PicoLog` — same type, same `namespace PicoLog`: source-compatible after adding the package, binary-incompatible (recompile; no type forwarder, no `[Obsolete]` stub) |
 
 ### Mediator
 | Package | Description |
@@ -510,6 +510,7 @@ var mediator = scope.GetService<IMediator>();
 - [PicoLog](PicoLog/README.md) — Structured logging, sinks, message templates
 - [PicoMediator](PicoMediator/README.md) — Command/event dispatch
 - [PicoSchedule](PicoSchedule/README.md) — Embedded timing-wheel scheduler (cron)
+- [Changelog](CHANGELOG.md) — breaking changes
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
