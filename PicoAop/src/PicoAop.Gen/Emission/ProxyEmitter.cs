@@ -190,12 +190,7 @@ internal static class ProxyEmitter
         var retType = method.ReturnType.ToDisplayString(Fq);
         var paramDecl = string.Join(", ", method.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", method.Parameters.Select(ParameterArgument));
-        var modifier = Modifier(
-            method.IsVirtual,
-            method.IsOverride,
-            method.IsAbstract,
-            isClassType
-        );
+        var modifier = Modifier(method, isClassType);
 
         sb.AppendLine(
             $"    {modifier} {refPrefix}{retType} {method.Name}{typeParameters}({paramDecl}){constraints}"
@@ -265,12 +260,7 @@ internal static class ProxyEmitter
     {
         var property = member.Property!;
         var propType = property.Type.ToDisplayString(Fq);
-        var modifier = Modifier(
-            property.IsVirtual,
-            property.IsOverride,
-            property.IsAbstract,
-            isClassType
-        );
+        var modifier = Modifier(property, isClassType);
         var lastStep = interceptorTypes.Count - 1;
         var interceptorArgs = string.Join(", ", interceptorTypes.Select((_, i) => $"_i{i}"));
 
@@ -325,12 +315,7 @@ internal static class ProxyEmitter
     {
         var indexer = member.Property!;
         var propType = indexer.Type.ToDisplayString(Fq);
-        var modifier = Modifier(
-            indexer.IsVirtual,
-            indexer.IsOverride,
-            indexer.IsAbstract,
-            isClassType
-        );
+        var modifier = Modifier(indexer, isClassType);
         var paramDecl = string.Join(", ", indexer.Parameters.Select(ParameterDeclaration));
         var paramArgs = string.Join(", ", indexer.Parameters.Select(ParameterArgument));
 
@@ -348,12 +333,7 @@ internal static class ProxyEmitter
     {
         var @event = member.Event!;
         var eventType = @event.Type.ToDisplayString(Fq);
-        var modifier = Modifier(
-            @event.IsVirtual,
-            @event.IsOverride,
-            @event.IsAbstract,
-            isClassType
-        );
+        var modifier = Modifier(@event, isClassType);
 
         sb.AppendLine($"    {modifier} event {eventType} {@event.Name}");
         sb.AppendLine("    {");
@@ -363,12 +343,17 @@ internal static class ProxyEmitter
         sb.AppendLine();
     }
 
-    private static string Modifier(
-        bool isVirtual,
-        bool isOverride,
-        bool isAbstract,
-        bool isClassType
-    ) => isClassType && (isVirtual || isOverride || isAbstract) ? "public override" : "public";
+    /// <summary>
+    /// How a generated member is declared. On a class service an overridable
+    /// member is <c>override</c>n (that is what routes the call); a member the
+    /// proxy cannot override is emitted with <c>new</c>, so the hiding is
+    /// deliberate — feeding the pass-through body without the CS0108 warning
+    /// that lands in a file the consumer cannot edit.
+    /// </summary>
+    private static string Modifier(ISymbol member, bool isClassType) =>
+        !isClassType ? "public"
+        : ServicePlanner.IsOverridable(member) ? "public override"
+        : "public new";
 
     private static bool IsWritable(IPropertySymbol property) =>
         property.SetMethod is { DeclaredAccessibility: Accessibility.Public, IsInitOnly: false };

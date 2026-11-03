@@ -40,6 +40,7 @@ public abstract class GeneratorTestBase
         GeneratorDriverRunResult RunResult,
         ImmutableArray<Diagnostic> GeneratorDiagnostics,
         ImmutableArray<Diagnostic> Errors,
+        ImmutableArray<Diagnostic> Warnings,
         Compilation UpdatedCompilation,
         string GeneratedOutput
     )
@@ -52,7 +53,25 @@ public abstract class GeneratorTestBase
                 )
             );
 
+        /// <summary>
+        /// The compiler warnings of the updated compilation. A generated proxy
+        /// that hides a base member (CS0108) reports here, and that warning
+        /// lands in a file the consumer cannot edit — so a test can assert the
+        /// emitted code is not merely error-free but warning-free.
+        /// </summary>
+        public string WarningText =>
+            string.Join(
+                Environment.NewLine,
+                Warnings.Select(e =>
+                    $"{e.Id}: {e.GetMessage()} [{e.Location.SourceTree?.FilePath ?? "<none>"}]"
+                )
+            );
+
         public ImmutableArray<string> DiagnosticIds => [.. GeneratorDiagnostics.Select(d => d.Id)];
+
+        /// <summary>Messages of the generator's own diagnostics, one per line.</summary>
+        public string DiagnosticText =>
+            string.Join(Environment.NewLine, GeneratorDiagnostics.Select(d => d.GetMessage()));
     }
 
     protected static async Task RunGenerator(
@@ -118,12 +137,11 @@ public abstract class GeneratorTestBase
             out var genDiags
         );
         var runResult = updatedDriver.GetRunResult();
-        var errors = updated
-            .GetDiagnostics()
-            .Where(d => d.Severity == DiagnosticSeverity.Error)
-            .ToImmutableArray();
+        var all = updated.GetDiagnostics().ToImmutableArray();
+        var errors = all.Where(d => d.Severity == DiagnosticSeverity.Error).ToImmutableArray();
+        var warnings = all.Where(d => d.Severity == DiagnosticSeverity.Warning).ToImmutableArray();
         var output = string.Join("\n", runResult.GeneratedTrees.Select(t => t.ToString()));
-        return new CompilationResult(runResult, genDiags, errors, updated, output);
+        return new CompilationResult(runResult, genDiags, errors, warnings, updated, output);
     }
 
     /// <summary>

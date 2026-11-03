@@ -74,6 +74,29 @@ internal sealed class ServicePlan(
 /// </summary>
 internal static class ServicePlanner
 {
+    /// <summary>
+    /// Why a class member cannot be intercepted: the proxy is a subclass, and a
+    /// member that is not <c>virtual</c>/<c>abstract</c>/<c>override</c> cannot
+    /// be overridden, so a decorated call can never reach the chain.
+    /// </summary>
+    internal const string NotOverridableReason =
+        "a non-virtual member of a class, which a derived proxy cannot override";
+
+    /// <summary>
+    /// Whether a derived proxy can route this member. Only class services care:
+    /// an interface member is always implemented by the proxy.
+    /// </summary>
+    internal static bool IsOverridable(ISymbol member) =>
+        member switch
+        {
+            IMethodSymbol method => method.IsVirtual || method.IsOverride || method.IsAbstract,
+            IPropertySymbol property => property.IsVirtual
+                || property.IsOverride
+                || property.IsAbstract,
+            IEventSymbol @event => @event.IsVirtual || @event.IsOverride || @event.IsAbstract,
+            _ => false,
+        };
+
     public static ServicePlan? Build(INamedTypeSymbol service, List<Diagnostic> diagnostics)
     {
         var safeName = InvocationEmitter.BuildSafeServiceName(service);
@@ -161,6 +184,13 @@ internal static class ServicePlanner
         PlannedMember Intercepted() =>
             new(PlannedMemberKind.Method, method, null, null, MemberEmission.Intercepted);
 
+        // A class proxy derives from the service, so only an overridable member
+        // can be routed. Emitting the rest as a plain `public` member hides the
+        // base one (CS0108) and intercepts nothing a consumer can reach, because
+        // `Wrap_*` returns the service type, not the proxy.
+        if (service.TypeKind == TypeKind.Class && !IsOverridable(method))
+            return Delegated(service, method, diagnostics, NotOverridableReason);
+
         if (method.Parameters.Any(p => p.RefKind != RefKind.None))
         {
             diagnostics.Add(
@@ -220,6 +250,20 @@ internal static class ServicePlanner
                 )
             );
             return intercepted.DelegateTo("indexer");
+        }
+
+        if (service.TypeKind == TypeKind.Class && !IsOverridable(property))
+        {
+            diagnostics.Add(
+                Diagnostic.Create(
+                    PicoAopDiag.MemberDelegated,
+                    Location.None,
+                    property.Name,
+                    service.Name,
+                    NotOverridableReason
+                )
+            );
+            return intercepted.DelegateTo(NotOverridableReason);
         }
 
         if (property.Type.IsRefLikeType || IsUnsafeType(property.Type))
