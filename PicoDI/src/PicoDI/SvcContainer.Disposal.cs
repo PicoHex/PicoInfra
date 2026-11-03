@@ -10,7 +10,7 @@ public sealed partial class SvcContainer
 
         // Order of the groups is a dependency order: a disposer may use what it depends on, so
         // a dependency is released after its dependents. Each group keeps its own inner order
-        // (hosted services LIFO by registration, singletons LIFO by construction, scopes
+        // (hosted services LIFO by start order, singletons LIFO by construction, scopes
         // children-before-parents).
         //
         // 1. Hosted services stop first: their StopAsync may still use any service, including
