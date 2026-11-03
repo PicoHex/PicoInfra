@@ -122,14 +122,21 @@ public class ContainerDisposalOrderTests
         await container.DisposeAsync();
 
         // hosted.Stop first, then the scope's disposables, then the singleton they depend on.
+        // CollectionOrdering.Matching is the point of this assertion: plain IsEquivalentTo is a
+        // SET comparison, so moving "hosted.Stop" below the scope disposal — the regression the
+        // group order in SvcContainer.Disposal.cs exists to prevent — kept the suite green
+        // (review-2026-11-02 defect M1).
         await Assert
             .That(log.Entries)
-            .IsEquivalentTo([
-                "hosted.Start",
-                "hosted.Stop",
-                "scoped.Dispose(singletonAlive=True)",
-                "singleton.Dispose",
-            ]);
+            .IsEquivalentTo(
+                [
+                    "hosted.Start",
+                    "hosted.Stop",
+                    "scoped.Dispose(singletonAlive=True)",
+                    "singleton.Dispose",
+                ],
+                CollectionOrdering.Matching
+            );
     }
 
     [Test]
@@ -150,11 +157,14 @@ public class ContainerDisposalOrderTests
 
         // The singleton's Dispose may use the scoped dependency it captured; that dependency
         // lives in the container-internal root scope and must therefore be released last.
+        // CollectionOrdering.Matching pins that sequence — the captured dependency's payload is
+        // "True" here only while the singleton is still alive when it is disposed
+        // (review-2026-11-02 defect M1).
         await Assert
             .That(log.Entries)
-            .IsEquivalentTo([
-                "singleton.Dispose(depAlive=True)",
-                "scopedDep.Dispose(depAlive=False)",
-            ]);
+            .IsEquivalentTo(
+                ["singleton.Dispose(depAlive=True)", "scopedDep.Dispose(depAlive=False)"],
+                CollectionOrdering.Matching
+            );
     }
 }
