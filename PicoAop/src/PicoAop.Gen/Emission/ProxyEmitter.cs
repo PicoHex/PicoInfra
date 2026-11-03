@@ -182,12 +182,9 @@ internal static class ProxyEmitter
     {
         var method = member.Method!;
         var typeParameters = InvocationEmitter.TypeParameterList(method);
-        // An explicit interface implementation inherits the constraints of the
-        // interface member: repeating them is CS0460. A constraint-free method
-        // is unaffected, which is why the plainer collision shapes missed this.
-        var constraints = member.ExplicitInterface is null
-            ? InvocationEmitter.ConstraintClauses(method)
-            : string.Empty;
+        var constraints = InheritsConstraints(member, isClassType)
+            ? string.Empty
+            : InvocationEmitter.ConstraintClauses(method);
         var refPrefix =
             method.ReturnsByRef ? "ref "
             : method.ReturnsByRefReadonly ? "ref readonly "
@@ -376,6 +373,20 @@ internal static class ProxyEmitter
     /// one from a different base interface is qualified, so the compiler reads it
     /// as an explicit interface implementation.
     /// </summary>
+    /// <summary>
+    /// Whether the emitted declaration <em>inherits</em> the member's
+    /// constraints instead of repeating them. An explicit interface
+    /// implementation and an <c>override</c> both do: repeating a constraint
+    /// there is CS0460 ("the constraints ... are inherited from the base method,
+    /// so they cannot be specified directly, except for either a <c>class</c>,
+    /// or a <c>struct</c> constraint") — which is why an interface constraint or
+    /// <c>allows ref struct</c> failed on a class service while
+    /// <c>where T : class</c> did not.
+    /// </summary>
+    private static bool InheritsConstraints(PlannedMember member, bool isClassType) =>
+        member.ExplicitInterface is not null
+        || (isClassType && ServicePlanner.IsOverridable(SymbolOf(member)));
+
     private static string MemberName(PlannedMember member, string name) =>
         member.ExplicitInterface is null ? name : $"{member.ExplicitInterface}.{name}";
 

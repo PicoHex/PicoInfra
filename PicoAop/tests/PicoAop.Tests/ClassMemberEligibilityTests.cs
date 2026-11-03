@@ -353,6 +353,141 @@ public class ClassMemberEligibilityTests : GeneratorTestBase
         await Assert.That(result.WarningText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// D5's reason text ended with "and the emitted pass-through is never
+    /// reached". That is true for a public non-virtual class member — it *is*
+    /// emitted, as <c>public new</c>, and a consumer holding the service type
+    /// cannot reach it — but false for the two branches D5 itself added: an
+    /// inherited member and a <c>protected</c> member of the service are
+    /// reported and *nothing is emitted for them at all*
+    /// (review-2026-11-02/rev-aop-5c.md, D-c; probes P1: no <c>public new</c>,
+    /// no "Inherited" in the generated file, and A5: no "Hidden").
+    /// </summary>
+    [Test]
+    public async Task UnplannedClassMemberReason_DoesNotClaimAPassThroughThatIsNeverEmitted()
+    {
+        var inherited = CompileGenerated(
+            Preamble
+                + """
+
+                public class Base
+                {
+                    public virtual int Inherited() => 1;
+                }
+
+                public class Svc : Base
+                {
+                    public virtual int Own() => 2;
+                }
+                """
+        );
+        var hidden = CompileGenerated(
+            Preamble
+                + """
+
+                public class Svc
+                {
+                    protected virtual int Hidden() => 3;
+                    public virtual int Ok() => 1;
+                }
+                """
+        );
+        Console.WriteLine($"INHERITED DIAGS: {inherited.DiagnosticText}");
+        Console.WriteLine($"HIDDEN DIAGS: {hidden.DiagnosticText}");
+
+        // Nothing is emitted for either member — so the reason must not claim an
+        // emitted pass-through, and must say what really happens instead.
+        await Assert.That(inherited.DiagnosticText.Contains("'Inherited'")).IsTrue();
+        await Assert.That(inherited.DiagnosticText.Contains("pass-through")).IsFalse();
+        await Assert.That(inherited.DiagnosticText.Contains("nothing is emitted")).IsTrue();
+        await Assert.That(inherited.GeneratedOutput.Contains("Inherited")).IsFalse();
+
+        await Assert.That(hidden.DiagnosticText.Contains("'Hidden'")).IsTrue();
+        await Assert.That(hidden.DiagnosticText.Contains("pass-through")).IsFalse();
+        await Assert.That(hidden.DiagnosticText.Contains("nothing is emitted")).IsTrue();
+        await Assert.That(hidden.GeneratedOutput.Contains("Hidden")).IsFalse();
+
+        await Assert.That(inherited.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(hidden.ErrorText).IsEqualTo(string.Empty);
+    }
+
+    /// <summary>
+    /// A public non-virtual member is a different case, and its reason stays as
+    /// D4 left it: that member <em>is</em> emitted (<c>public new</c>) and that
+    /// pass-through really is unreachable for a consumer holding the service
+    /// type, so the sentence is still true there.
+    /// </summary>
+    [Test]
+    public async Task NonVirtualClassMemberReason_StillNamesTheUnreachableEmittedPassThrough()
+    {
+        var result = CompileGenerated(Preamble + ClassShape);
+        Console.WriteLine($"DIAGS: {result.DiagnosticText}");
+
+        await Assert.That(result.DiagnosticText.Contains("pass-through is never reached")).IsTrue();
+        await Assert.That(result.GeneratedOutput.Contains("public new int Plain()")).IsTrue();
+    }
+
+    /// <summary>
+    /// A class service's member is emitted as an <c>override</c>, and an override
+    /// inherits the constraints of the member it overrides — repeating them is
+    /// CS0460 for everything except a bare <c>class</c>/<c>struct</c>. Measured on
+    /// the tree before this change, both shapes below put a <c>where</c> on the
+    /// generated override:
+    /// <code>
+    /// public override string F<T>(T x) where T : global::System.IComparable<T>
+    /// public override int N<T>() where T : allows ref struct
+    /// CS0460: Constraints for override and explicit interface implementation
+    ///         methods are inherited from the base method, so they cannot be
+    ///         specified directly, except for either a 'class', or a 'struct'
+    ///         constraint
+    /// </code>
+    /// The first is pre-existing (it never needed a new clause to reproduce); the
+    /// second is what emitting <c>allows ref struct</c> for D-d would otherwise
+    /// have introduced on this path.
+    /// review-2026-11-02/rev-aop-5c.md, D-d.
+    /// </summary>
+    [Test]
+    public async Task ClassVirtualGenericMember_DoesNotRepeatInheritedConstraints()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public class Svc
+                {
+                    public virtual T Echo<T>(T x)
+                        where T : IComparable<T> => x;
+
+                    public virtual int Count<T>()
+                        where T : allows ref struct => 1;
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        var overrideLines = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("public override ", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"OVERRIDES: {string.Join(" || ", overrideLines)}");
+        await Assert.That(overrideLines.Count).IsEqualTo(2);
+        await Assert
+            .That(overrideLines.Any(line => line.Contains("where", StringComparison.Ordinal)))
+            .IsFalse();
+
+        // The overridable one is still intercepted; the `allows ref struct` one is
+        // still delegated and reported.
+        await Assert.That(result.GeneratedOutput.Contains("Invocation_Svc_Echo")).IsTrue();
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+        await Assert.That(result.DiagnosticText.Contains("'Count'")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
     private static object CreateProxy(Assembly assembly)
     {
         var proxyType =

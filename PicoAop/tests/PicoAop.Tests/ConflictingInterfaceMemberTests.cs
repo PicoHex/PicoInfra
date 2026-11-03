@@ -744,6 +744,71 @@ public class ConflictingInterfaceMemberTests : GeneratorTestBase
         await Assert.That(result.WarningText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// <c>allows ref struct</c> is part of the signature for implementation
+    /// purposes: a member that has it is not implemented by a member that does
+    /// not. The key ignored it, so the plain twin won the dedupe, the
+    /// constrained member was dropped, and the proxy did not implement it:
+    /// <code>
+    /// CS0535: 'Intercepted_JC_CountingInterceptor' does not implement interface
+    ///         member 'JB.P&lt;T&gt;()'
+    /// </code>
+    /// with no PICO113. Keyed, the pair is reported as a collision and both are
+    /// emitted — one implicit, one explicit (constraints inherited) — which
+    /// compiles. review-2026-11-02/rev-aop-5c.md, D-d.
+    /// </summary>
+    [Test]
+    public async Task AllowsRefStructConstraint_IsPartOfTheSignatureKey()
+    {
+        var result = CompileGenerated(
+            Preamble
+                + """
+
+                public interface JA
+                {
+                    int P<T>();
+                }
+
+                public interface JB
+                {
+                    int P<T>()
+                        where T : allows ref struct;
+                }
+
+                public interface JC : JA, JB { }
+
+                public class C : JC
+                {
+                    public int P<T>() => 3;
+                    int JB.P<T>() => 4;
+                }
+
+                static class Registration
+                {
+                    static void Do(IDummyContainer c)
+                    {
+                        c.Register<JC, C>().InterceptBy<CountingInterceptor>();
+                    }
+                }
+                """
+        );
+        Console.WriteLine("----- generated -----");
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join("|", result.DiagnosticText)}");
+
+        // The pair is a collision of two different signatures, and it is named.
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO113")).IsEqualTo(1);
+        // Both members are emitted: the plain one implicitly, the constrained one
+        // explicitly (an explicit implementation inherits the constraints, so it
+        // repeats no `where` — CS0460).
+        await Assert.That(result.GeneratedOutput.Contains("public int P<T>()")).IsTrue();
+        await Assert.That(result.GeneratedOutput.Contains("global::JB.P<T>()")).IsTrue();
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        await Assert.That(result.WarningText).IsEqualTo(string.Empty);
+    }
+
     private static List<string> ReadCalls(Assembly assembly) =>
         (List<string>)assembly.GetType("CountingInterceptor")!.GetField("Calls")!.GetValue(null)!;
 }

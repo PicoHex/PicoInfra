@@ -76,6 +76,13 @@ internal static class InvocationEmitter
             if (typeParameter.HasConstructorConstraint)
                 clauses.Add("new()");
 
+            // An anti-constraint, and it must be the last clause (CS9242). Part
+            // of the member's signature for implementation purposes: leaving it
+            // off the emitted pass-through is CS0425 even for a single
+            // interface, where there is nothing to merge.
+            if (typeParameter.AllowsRefLikeType)
+                clauses.Add("allows ref struct");
+
             if (clauses.Count > 0)
                 sb.Append($" where {typeParameter.Name} : {string.Join(", ", clauses)}");
         }

@@ -792,6 +792,70 @@ public class GeneratorCompileTests : GeneratorTestBase
         await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
     }
 
+    /// <summary>
+    /// <c>allows ref struct</c> is an anti-constraint, and an implementation of
+    /// the member has to repeat it — a single interface, nothing to merge:
+    /// <code>
+    /// interface ISvc { int M&lt;T&gt;() where T : allows ref struct; }
+    /// </code>
+    /// used to emit <c>public int M&lt;T&gt;()</c> with no <c>where</c> at all:
+    /// <code>
+    /// CS0425: The constraints for type parameter 'T' of method 'M&lt;T&gt;()' must
+    ///         match the constraints for type parameter 'T' of interface method
+    ///         'ISvc.M&lt;T&gt;()'
+    /// </code>
+    /// The method is (correctly) delegated, but the pass-through still has to
+    /// carry the clause. review-2026-11-02/rev-aop-5c.md, D-d; probe A4.
+    /// </summary>
+    [Test]
+    public async Task AllowsRefStructConstraint_IsRepeatedOnTheEmittedMember()
+    {
+        var result = CompileGenerated(
+            Shape(
+                """
+                public interface ISvc
+                {
+                    int M<T>()
+                        where T : allows ref struct;
+                }
+
+                public class Svc : ISvc
+                {
+                    public int M<T>()
+                        where T : allows ref struct => 1;
+                }
+                """
+            )
+        );
+        Console.WriteLine(result.GeneratedOutput);
+        Console.WriteLine("----- errors -----");
+        Console.WriteLine(result.ErrorText);
+        Console.WriteLine($"DIAGS: {string.Join(",", result.DiagnosticIds)}");
+
+        // The clause is emitted, and last: `allows` after any other constraint is
+        // CS9242 ("must be the last constraint specified").
+        var declaration = result
+            .GeneratedOutput.Split('\n')
+            .Where(line => line.Contains("int M<T>()", StringComparison.Ordinal))
+            .ToList();
+        Console.WriteLine($"DECLARATIONS: {string.Join(" || ", declaration)}");
+        await Assert.That(declaration.Count).IsEqualTo(1);
+        await Assert
+            .That(declaration[0].Contains("where T : allows ref struct", StringComparison.Ordinal))
+            .IsTrue();
+        // Still delegated, and the diagnostic still says so.
+        await Assert
+            .That(
+                result.GeneratedOutput.Contains("return _inner.M<T>();", StringComparison.Ordinal)
+            )
+            .IsTrue();
+        await Assert.That(result.DiagnosticIds.Count(id => id == "PICO111")).IsEqualTo(1);
+        await Assert.That(result.ErrorText).IsEqualTo(string.Empty);
+        // No WarningText assertion here: this file's Preamble has no
+        // `#nullable enable`, so CS8632 is reported against the probe source, not
+        // against the generated file.
+    }
+
     [Test]
     public async Task SkippedService_StillEmitsPassthroughWrapper_SoTheOnlyErrorIsTheDiagnostic()
     {

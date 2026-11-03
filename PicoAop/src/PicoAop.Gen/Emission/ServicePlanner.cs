@@ -698,6 +698,11 @@ internal static class ServicePlanner
                 if (isService && plannedSlots.Contains(slot))
                     continue;
 
+                // Nothing is emitted for either branch below — the plan covers
+                // only the service's own public members — so neither may carry
+                // the "emitted pass-through is never reached" claim of
+                // NotOverridableReason. That claim is true only where a `new`
+                // member really exists (D4), which is not the case here.
                 diagnostics.Add(
                     Diagnostic.Create(
                         PicoAopDiag.MemberDelegated,
@@ -705,8 +710,8 @@ internal static class ServicePlanner
                         member.Name,
                         service.Name,
                         isService
-                            ? "a non-public member of the service, which a derived proxy cannot re-declare without changing its accessibility; calls execute on the inherited implementation, and the emitted pass-through is never reached"
-                            : $"inherited from '{type.Name}', which the proxy does not re-declare; calls execute on the inherited implementation, and the emitted pass-through is never reached"
+                            ? "a non-public member of the service, which a derived proxy cannot re-declare without changing its accessibility; calls execute on the inherited implementation, and nothing is emitted for it"
+                            : $"inherited from '{type.Name}', which the proxy does not re-declare; calls execute on the inherited implementation, and nothing is emitted for it"
                     )
                 );
             }
@@ -807,6 +812,7 @@ internal static class ServicePlanner
                                     .OrderBy(text => text, StringComparer.Ordinal)
                             ),
                             typeParameter.HasConstructorConstraint ? "new" : string.Empty,
+                            typeParameter.AllowsRefLikeType ? "allows ref struct" : string.Empty,
                         }
                     )
                 )
