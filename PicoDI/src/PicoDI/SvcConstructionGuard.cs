@@ -164,9 +164,13 @@ internal static class SvcConstructionGuard
     /// </summary>
     /// <remarks>
     /// The frame store is allocated on the first construction of a thread and reused afterwards, so a
-    /// thread that builds N services back-to-back allocates one list, not N (and grows it past the
-    /// initial capacity of 4 at most once). The empty list is kept — it holds no container, scope or
-    /// registration, because the slot that <see cref="Pop"/> vacates is cleared.
+    /// thread that builds N services back-to-back allocates one list, not N. It regrows whenever a
+    /// construction chain goes deeper than the list's current capacity (4 -> 8 -> 16 -> ...) and never
+    /// shrinks, so a thread that keeps reaching new depths keeps reallocating the backing array. The
+    /// price of the reuse: the list — and that array — stays allocated for the rest of the thread's
+    /// life, 152 B at the initial capacity of 4 (more if that thread once needed a deeper chain), on
+    /// every thread that ever resolved a scoped or singleton service. The empty list holds no
+    /// container, scope or registration, because the slot that <see cref="Pop"/> vacates is cleared.
     /// </remarks>
     internal static void Push(
         SvcContainer container,

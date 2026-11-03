@@ -122,8 +122,8 @@ if (container.IsRegistered(typeof(IService)))
 | Lifetime | Instantiation | Disposal |
 |---|---|---|
 | **Transient** | New every resolution | Tracked by resolving scope, disposed in reverse creation order (LIFO) |
-| **Scoped** | Once per scope per successful construction — a factory that throws is retried on the next resolve | Disposed when scope disposes |
-| **Singleton** | Once per container | Disposed when container disposes |
+| **Scoped** | Once per scope per successful construction — a factory that throws is retried by the next resolve that starts after the failure | Disposed when scope disposes |
+| **Singleton** | Once per container per successful construction — a factory that throws is retried on the next resolve | Disposed when container disposes |
 
 Multiple registrations for the same service type are supported. Resolution returns the last (most recent) registration. `GetServices<T>()` returns all registrations in order.
 
@@ -326,7 +326,7 @@ All wiring is resolved at compile time — zero reflection. See [PicoDI.Sample.A
 - **Unregistered service**: `GetService()` throws `PicoDiException`. Use `TryGetService()` / `TryGetServices()` for optional dependencies.
 - **Circular dependency**: a singleton or scoped factory that resolves the service it is constructing — directly or through a chain — throws `PicoDiException` naming the cycle (`A -> B -> A`) instead of overflowing the stack. (Transient-to-transient cycles are still not detected: transients are not tracked as under construction.)
 - **Exception type change for scoped cycles**: this diagnostic replaced an older failure mode. A *scoped* cycle used to surface as `System.InvalidOperationException` (`ValueFactory attempted to access the Value property of this instance.`) — the scoped instance is a `Lazy<T>`, and `Lazy` throws on re-entrance. It now surfaces as `PicoDiException`, which derives from `Exception` and **not** from `InvalidOperationException`: code that wrapped a scoped resolve in `catch (InvalidOperationException)` silently stops catching it, so catch `PicoDiException` (or `Exception`) instead. Singleton cycles went from a `Stack overflow.` process abort to the same `PicoDiException`.
-- **Scoped factory retry (behaviour change)**: a scoped factory that throws no longer poisons the scope. The failed instance is evicted and the *next* resolve of that service in that scope runs the factory again, so a transient failure is retried instead of rethrowing the cached exception forever, and a factory that always throws throws again on every resolve. A successful scoped instance is still created exactly once and disposed exactly once; the cost of the retry is that a scoped factory with side effects may now run more than once per scope.
+- **Scoped factory retry (behaviour change)**: a scoped factory that throws no longer poisons the scope. The failed instance is evicted and a resolve that *starts* after the failure runs the factory again, so a transient failure is retried instead of rethrowing the cached exception forever, and a factory that always throws throws again on every later resolve. This holds for resolves that begin after the failure: a resolve already in flight and blocked on that instance in that scope — the scoped value is a shared `Lazy<T>` — still receives the original exception. A successful scoped instance is still created exactly once and disposed exactly once; the cost of the retry is that a scoped factory with side effects may now run more than once per scope.
 - **Disposed scope/container**: Throws `ObjectDisposedException`.
 - **Source generator not applied**: Throws `SourceGeneratorRequiredException` for type-based registrations.
 
