@@ -48,19 +48,34 @@ internal static class TomlFlattener
         var arrays = new Stack<ArrayFrame>();
         var scope = ""; // prefix PropertyName tokens attach to ("" = document root)
         string? pendingKey = null;
+        // The path the previous token published. An inline-array value arrives as a PropertyName
+        // carrying the PREVIOUS key's value in ValueSpan (the reader keeps the old span for an
+        // array value - measured against PicoToml 2026.12.1), so that PropertyName is not
+        // recognised as the array's key and the entry it wrote has to be given back.
+        string? written = null;
         // Set while the document is inside a [[table]] block. Array tables carry no end token, so
         // the block ends when a token reports a different table.
         string? arrayTableScope = null;
 
         while (reader.Read())
         {
+            var publishedByPreviousToken = written;
+            written = null;
+
             switch (reader.TokenType)
             {
                 case TokenType.PropertyName:
                 {
                     var key = Encoding.UTF8.GetString(reader.KeySpan);
                     if (arrayTableScope is not null && Table(reader) != arrayTableScope)
+                    {
+                        // The block ends with the token that reports another table, and the scope
+                        // named ITS row - so the scope has to go with the block. Left in place it
+                        // prefixed everything that followed: [z] below used to flatten b/c as
+                        // s:0:b/s:0:c instead of z:b/z:c.
                         arrayTableScope = null;
+                        scope = "";
+                    }
                     if (reader.ValueSpan.IsEmpty)
                     {
                         pendingKey = key; // a value array follows
@@ -75,12 +90,17 @@ internal static class TomlFlattener
                         break;
 
                     var prefix = scope.Length > 0 ? "" : Table(reader);
-                    result[Join(scope, prefix, key)] = Encoding.UTF8.GetString(reader.ValueSpan);
+                    var path = Join(scope, prefix, key);
+                    result[path] = Encoding.UTF8.GetString(reader.ValueSpan);
+                    written = path;
                     pendingKey = null;
                     break;
                 }
 
-                case TokenType.ArrayStart when reader.IsArrayTable:
+                // No [[table]] header can appear inside an open value array, so a bracket token
+                // there is a nested array whatever the reader's flag says.
+                case TokenType.ArrayStart
+                    when arrays.Count == 0 && IsArrayTableHeader(reader, toml):
                 {
                     // One ArrayStart per [[table]] element, with no ArrayEnd to balance it, so the
                     // element index has to come from a per-table counter rather than a stack.
@@ -94,10 +114,23 @@ internal static class TomlFlattener
                 }
 
                 case TokenType.ArrayStart:
+                {
+                    // A value array, named by the PropertyName that opened it. Inside a [[table]]
+                    // block (or another array) the scope already names the element, so the table
+                    // path must not be prepended a second time. When the opening PropertyName
+                    // carried a stale ValueSpan instead of naming the array, the array's key is
+                    // the entry that PropertyName just published - which is not the array, so it
+                    // is dropped before the elements are indexed under it.
+                    var openScope = pendingKey is not null
+                        ? Join(scope, scope.Length > 0 ? "" : Table(reader), pendingKey)
+                        : publishedByPreviousToken ?? Join(scope, Table(reader), "");
+                    if (pendingKey is null && publishedByPreviousToken is not null)
+                        result.Remove(publishedByPreviousToken);
                     arrays.Push(new ArrayFrame(scope));
-                    scope = Join(scope, Table(reader), pendingKey ?? "");
+                    scope = openScope;
                     pendingKey = null;
                     break;
+                }
 
                 case TokenType.ArrayEnd:
                     if (arrays.Count > 0)
@@ -129,6 +162,38 @@ internal static class TomlFlattener
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Distinguishes the <c>[[table]]</c> header from a value array inside a <c>[[table]]</c>
+    /// block: both arrive as an <c>ArrayStart</c>, and both report <c>IsArrayTable</c> - the flag
+    /// stays set until the next header is read (measured against PicoToml 2026.12.1), so it cannot
+    /// tell them apart. The source can: a header is the line that begins with <c>[</c>, while a
+    /// value array's <c>ArrayStart</c> starts past its own bracket, at the first element or at the
+    /// closing <c>]</c>. The token start can sit on the blank line above its header (measured),
+    /// which is why the scan steps over blanks before asking where the line begins. Byte values are
+    /// written out here (9 = tab, 10 = LF, 13 = CR) to keep the arithmetic obvious.
+    /// </summary>
+    private static bool IsArrayTableHeader(TomlReader reader, ReadOnlySpan<byte> toml)
+    {
+        if (!reader.IsArrayTable)
+            return false;
+
+        var bracket = (int)reader.TokenStart;
+        if (bracket < 0 || bracket >= toml.Length)
+            return false;
+
+        while (bracket < toml.Length && toml[bracket] is (byte)' ' or 9 or 10 or 13)
+            bracket++;
+        if (bracket >= toml.Length || toml[bracket] != (byte)'[')
+            return false;
+
+        // Indentation only between the line start and the bracket, or it is not a header.
+        var lineStart = bracket;
+        while (lineStart > 0 && toml[lineStart - 1] is (byte)' ' or 9)
+            lineStart--;
+
+        return lineStart == 0 || toml[lineStart - 1] is 10 or 13;
     }
 
     private static string Table(TomlReader reader) =>

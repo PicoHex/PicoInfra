@@ -75,6 +75,13 @@ internal static class YamlFlattener
                         break;
                     }
 
+                    // With flattenArrays off the whole indexed subtree is skipped, not just the
+                    // sequence's own scalars: a sequence-of-mappings item is handed over as a fused
+                    // scalar plus a continuation object, and every member of that object is still
+                    // part of the sequence (Items:0:port used to leak with the flag off).
+                    if (!flattenArrays && frames[^1].UnderIndex)
+                        break;
+
                     result[Path(frames, key)] = Encoding.UTF8.GetString(reader.ValueSpan);
                     pendingKey = null;
                     break;
@@ -86,7 +93,14 @@ internal static class YamlFlattener
                 // own kind, so one frame per container serves either.
                 case TokenType.ObjectStart:
                 case TokenType.ArrayStart:
-                    frames.Add(new Frame(pendingItemIndex ?? pendingKey ?? ""));
+                    // A container keyed by an item index, or any container inside one, sits under
+                    // an index segment; that is what the flattenArrays gate below keys off.
+                    frames.Add(
+                        new Frame(
+                            pendingItemIndex ?? pendingKey ?? "",
+                            pendingItemIndex is not null || frames[^1].UnderIndex
+                        )
+                    );
                     pendingKey = null;
                     pendingItemIndex = null;
                     break;
@@ -140,9 +154,12 @@ internal static class YamlFlattener
         return string.Join(':', parts);
     }
 
-    private sealed class Frame(string key)
+    // underIndex: this frame's path already runs through a sequence index segment - the item
+    // itself, or anything nested inside it.
+    private sealed class Frame(string key, bool underIndex = false)
     {
         public string Key { get; } = key;
+        public bool UnderIndex { get; } = underIndex;
         public int NextIndex { get; set; }
     }
 }

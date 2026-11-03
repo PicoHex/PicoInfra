@@ -54,6 +54,32 @@ public class YamlNestedStructureTests
         await Assert.That(root.GetValue("Items:0:port")).IsEqualTo("1");
     }
 
+    /// <summary>
+    /// The documented contract is "sequences are skipped", not "sequence items are skipped": the
+    /// reader hands a <c>- name: x</c> item's first member over as a fused scalar and the rest of
+    /// the mapping as a continuation object, and that object's members used to be emitted whatever
+    /// <c>flattenArrays</c> said, so <c>Items:0:port</c> leaked with the flag off.
+    /// </summary>
+    [Test]
+    public async Task SequenceOfMappings_IsSkippedEntirely_When_FlattenArrays_Is_Off()
+    {
+        var builder = Cfg.CreateBuilder();
+        builder.AddYaml("Items:\n  - name: x\n    port: 1\nHost: localhost");
+
+        var root = await builder.BuildAsync();
+
+        await Assert.That(root.GetValue("Host")).IsEqualTo("localhost");
+        await Assert.That(root.GetValue("Items:0")).IsNull();
+        await Assert.That(root.GetValue("Items:0:name")).IsNull();
+        await Assert.That(root.GetValue("Items:0:port")).IsNull();
+
+        // Not only the keys named above: nothing at all may be published under Items.
+        var leaked = root.GetAll()
+            .Keys.Where(static key => key.StartsWith("Items", StringComparison.Ordinal))
+            .ToArray();
+        await Assert.That(string.Join(", ", leaked)).IsEqualTo("");
+    }
+
     [Test]
     public async Task BlockScalar_KeepsItsBody()
     {
