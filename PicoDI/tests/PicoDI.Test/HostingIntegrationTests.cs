@@ -120,8 +120,12 @@ public class HostingIntegrationTests
         // Act
         await host.StartAsync();
 
-        // Assert
-        await Assert.That(log).IsEquivalentTo(["Start:A", "Start:B", "Start:C"]);
+        // Assert — sequence, not membership: the bare overload is a SET comparison, so a
+        // start pass walked in reverse (C,B,A) produced the same three markers and left this
+        // test green (review-2026-11-02 test-validity finding 2).
+        await Assert
+            .That(log)
+            .IsEquivalentTo(["Start:A", "Start:B", "Start:C"], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -142,10 +146,16 @@ public class HostingIntegrationTests
         // Act
         await host.StopAsync();
 
-        // Assert — LIFO: C stops first, then B, then A
+        // Assert — LIFO: C stops first, then B, then A. CollectionOrdering.Matching is the point
+        // of this assertion: with the default (set) comparison the SAME six strings satisfy a
+        // forward shutdown, so inverting the stop loop to FIFO left this test green
+        // (review-2026-11-02 test-validity finding 1).
         await Assert
             .That(log)
-            .IsEquivalentTo(["Start:A", "Start:B", "Start:C", "Stop:C", "Stop:B", "Stop:A"]);
+            .IsEquivalentTo(
+                ["Start:A", "Start:B", "Start:C", "Stop:C", "Stop:B", "Stop:A"],
+                CollectionOrdering.Matching
+            );
     }
 
     #endregion
@@ -422,8 +432,12 @@ public class HostingIntegrationTests
         // Act
         await host.StartAsync();
 
-        // Assert — phases run in order: Starting → Start → Started
-        await Assert.That(log).IsEquivalentTo(["Starting:A", "Start:A", "Started:A"]);
+        // Assert — phases run in order: Starting → Start → Started, as a SEQUENCE: the set
+        // comparison this used to use cannot tell it from Starting → Started → Start
+        // (review-2026-11-02 test-validity finding 3).
+        await Assert
+            .That(log)
+            .IsEquivalentTo(["Starting:A", "Start:A", "Started:A"], CollectionOrdering.Matching);
     }
 
     [Test]
@@ -445,14 +459,10 @@ public class HostingIntegrationTests
         // Assert — stop phases run in order: Stopping → Stop → Stopped
         await Assert
             .That(log)
-            .IsEquivalentTo([
-                "Starting:A",
-                "Start:A",
-                "Started:A",
-                "Stopping:A",
-                "Stop:A",
-                "Stopped:A",
-            ]);
+            .IsEquivalentTo(
+                ["Starting:A", "Start:A", "Started:A", "Stopping:A", "Stop:A", "Stopped:A"],
+                CollectionOrdering.Matching
+            );
     }
 
     [Test]
@@ -473,14 +483,10 @@ public class HostingIntegrationTests
         // Assert — A completes all phases before B starts
         await Assert
             .That(log)
-            .IsEquivalentTo([
-                "Starting:A",
-                "Start:A",
-                "Started:A",
-                "Starting:B",
-                "Start:B",
-                "Started:B",
-            ]);
+            .IsEquivalentTo(
+                ["Starting:A", "Start:A", "Started:A", "Starting:B", "Start:B", "Started:B"],
+                CollectionOrdering.Matching
+            );
     }
 
     [Test]
@@ -503,20 +509,23 @@ public class HostingIntegrationTests
         // Assert — B stops first (LIFO), then A
         await Assert
             .That(log)
-            .IsEquivalentTo([
-                "Starting:A",
-                "Start:A",
-                "Started:A",
-                "Starting:B",
-                "Start:B",
-                "Started:B",
-                "Stopping:B",
-                "Stop:B",
-                "Stopped:B",
-                "Stopping:A",
-                "Stop:A",
-                "Stopped:A",
-            ]);
+            .IsEquivalentTo(
+                [
+                    "Starting:A",
+                    "Start:A",
+                    "Started:A",
+                    "Starting:B",
+                    "Start:B",
+                    "Started:B",
+                    "Stopping:B",
+                    "Stop:B",
+                    "Stopped:B",
+                    "Stopping:A",
+                    "Stop:A",
+                    "Stopped:A",
+                ],
+                CollectionOrdering.Matching
+            );
     }
 
     #endregion
