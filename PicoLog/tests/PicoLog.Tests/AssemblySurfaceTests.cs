@@ -132,21 +132,82 @@ public sealed class AssemblySurfaceTests
         //
         //     netstandard
         //
-        // That is the entire list. The CI failure proves it: the allow-list below joins to 236
-        // characters and the observed string differed at index 236, which is where `,netstandard`
-        // was appended. A name may be added here only from such a measurement, and it is stripped
-        // only while the instrumenter's own types are present in the module (see below).
+        // That is the entire list *as measured on windows-x64*, and it is NOT proven for the
+        // linux-x64 leg: CI run 41790525220 was red there while this same measurement reproduces
+        // green locally, and the log could not name the extra assembly at all (the renderer
+        // truncated both strings to "PicoLog.Abs,…" and only "differs at index 236" survived).
+        // Two causes fit that evidence equally — the instrumenter's own types not being detected on
+        // Linux, so nothing is stripped, or the linux-path instrumenter appending a name other than
+        // this one — so the code below is diagnostic-first: it prints the complete reference list
+        // and the detection result before it asserts anything. A name may be added here only from a
+        // measurement, never from a guess, and it is still stripped only while the instrumenter's
+        // own types are present in the module (see below).
         string[] coverageInjectedReferences = ["netstandard"];
 
-        var instrumentationPresent = HasCoverageInstrumentation(picoLogAssembly);
+        var instrumentation = ProbeCoverageInstrumentation(picoLogAssembly);
+        var instrumentationPresent = instrumentation.IsPresent;
         var strippedReferences = instrumentationPresent
             ? references
                 .Where(name => !coverageInjectedReferences.Contains(name, StringComparer.Ordinal))
                 .ToArray()
             : references;
 
-        // Strip first, then compare exactly: the allow-list stays 11 entries long, so anything that
-        // is not "the allow-list plus the measured instrumentation names" is still red.
+        var unexpected = strippedReferences
+            .Where(name => !allowedReferences.Contains(name, StringComparer.Ordinal))
+            .ToArray();
+        var missing = allowedReferences
+            .Where(name => !strippedReferences.Contains(name, StringComparer.Ordinal))
+            .ToArray();
+
+        // Print before asserting. The red CI log carried "PicoLog.Abs,…" on both sides plus
+        // "differs at index 236" and nothing else — no list of assemblies, and no index a human
+        // could resolve to a name. stdout survives a failed step, so this is the channel that
+        // cannot be truncated by the assertion renderer.
+        WriteDiagnostics(
+            picoLogAssembly,
+            instrumentation,
+            references,
+            allowedReferences,
+            coverageInjectedReferences,
+            strippedReferences,
+            unexpected,
+            missing
+        );
+
+        // Name the names BEFORE the exact comparison: one complete list per direction, no index
+        // arithmetic, no ellipsis. The exact comparison below stays exactly as it was.
+        await Assert
+            .That(unexpected)
+            .IsEmpty()
+            .Because(
+                "PicoLog references assemblies outside its allow-list: "
+                    + Render(unexpected)
+                    + " | received references: "
+                    + Render(references)
+                    + " | allowed: "
+                    + Render(allowedReferences)
+                    + " | stripped: "
+                    + Render(strippedReferences)
+                    + " | instrumentationPresent: "
+                    + instrumentationPresent
+                    + " | instrumenter types matched: "
+                    + Render(instrumentation.MatchedTypeNames)
+                    + " | instrumenter scan: "
+                    + instrumentation.Scan
+            );
+        await Assert
+            .That(missing)
+            .IsEmpty()
+            .Because(
+                "the allow-list names assemblies this assembly no longer references: "
+                    + Render(missing)
+                    + " | received references: "
+                    + Render(references)
+            );
+
+        // The pin, unchanged: strip first, then compare exactly. The allow-list stays 11 entries
+        // long, so anything that is not "the allow-list plus the measured instrumentation names" is
+        // still red — the two assertions above only make the reason legible.
         await Assert
             .That(string.Join(",", strippedReferences))
             .IsEqualTo(string.Join(",", allowedReferences));
@@ -165,7 +226,12 @@ public sealed class AssemblySurfaceTests
                 .That(string.Join(",", unjustified))
                 .IsEqualTo(string.Empty)
                 .Because(
-                    "the coverage exemption is instrumentation-only; without the instrumenter's types in the assembly, a name on that list is a real reference"
+                    "the coverage exemption is instrumentation-only; without the instrumenter's types in the assembly, a name on that list is a real reference. scan: "
+                        + instrumentation.Scan
+                        + " | detected types: "
+                        + Render(instrumentation.MatchedTypeNames)
+                        + " | legacy exact-name probe: "
+                        + instrumentation.LegacyProbe
                 );
         }
 
@@ -189,25 +255,281 @@ public sealed class AssemblySurfaceTests
             .Because("PicoLog must carry no serializer; the JSON sinks live in PicoLog.Json");
     }
 
-    // The Cecil instrumenter behind Microsoft.Testing.Extensions.CodeCoverage injects these two
-    // types into every module it rewrites (measured: both are present in the instrumented
-    // PicoLog.dll, alongside the single reference above). Their presence is the signal that the
-    // measured assembly is instrumented; if a future instrumenter renames them this returns false,
-    // nothing is stripped, and the exact comparison goes red on the extra references instead of
-    // quietly ignoring them. The fix then is to re-measure — never to widen the strip list.
-    private static readonly string[] CoverageInstrumentationTypeNames =
+    // The instrumenter injects its tracker types into every module it rewrites, and their presence
+    // is the ONLY positive evidence that this PicoLog.dll is the instrumented copy. Detection is a
+    // NAMESPACE scan, not two exact type names: a renamed, added or nested tracker type used to
+    // become a silent false negative, and a false negative here means nothing is stripped and the
+    // exact comparison goes red on the injected reference instead — exactly the linux-x64 failure
+    // this diagnostic was written for.
+    //
+    // The scan reads the module's METADATA (System.Reflection.Metadata over the file on disk) and
+    // never loads a type: Assembly.GetType has to resolve the injected type's dependencies, so it
+    // can return null — or throw — for reasons that have nothing to do with instrumentation. The
+    // old exact-name probe is still RUN and reported, because "metadata says instrumented, GetType
+    // says no" is the difference between the two candidate causes.
+    private const string CoverageInstrumentationNamespacePrefix =
+        "Microsoft.CodeCoverage.Instrumentation";
+
+    // Measured on windows-x64 with `dotnet-coverage instrument` (18.10.0, the engine behind the
+    // Microsoft.Testing.Extensions.CodeCoverage 18.10.0 this project restores) on this Release
+    // build: the static instrumenter adds exactly these two types, plus the single `netstandard`
+    // AssemblyRef. Reported, never used for the verdict.
+    private static readonly string[] MeasuredCoverageInstrumentationTypeNames =
     [
         "Microsoft.CodeCoverage.Instrumentation.Static.Tracker.StaticManagedTrackerTemplate_",
         "Microsoft.CodeCoverage.Instrumentation.Static.Tracker.PipeHelper_",
     ];
 
-#pragma warning disable IL2026
-    // Test-only reflection: this assembly is never trimmed or published.
-    private static bool HasCoverageInstrumentation(System.Reflection.Assembly assembly) =>
-        CoverageInstrumentationTypeNames.Any(typeName =>
-            assembly.GetType(typeName, throwOnError: false) is not null
+    private static InstrumentationProbe ProbeCoverageInstrumentation(
+        System.Reflection.Assembly assembly
+    )
+    {
+        var modulePath = ModulePath(assembly);
+        var (matched, scan) = modulePath is null
+            ? ScanLoadedTypes(assembly)
+            : ScanModuleFile(assembly, modulePath);
+
+        return new InstrumentationProbe(
+            matched.Length > 0,
+            matched,
+            scan,
+            DescribeLegacyProbe(assembly)
         );
+    }
+
+    private static string? ModulePath(System.Reflection.Assembly assembly)
+    {
+#pragma warning disable IL3000 // Empty only for single-file/in-memory assemblies, handled by the caller.
+        var path = assembly.Location;
+#pragma warning restore IL3000
+        return string.IsNullOrEmpty(path) || !File.Exists(path) ? null : path;
+    }
+
+    private static (string[] Matched, string Scan) ScanModuleFile(
+        System.Reflection.Assembly assembly,
+        string path
+    )
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var peReader = new System.Reflection.PortableExecutable.PEReader(stream);
+            var metadata = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(
+                peReader
+            );
+            var matched = new List<string>();
+            var scanned = 0;
+            foreach (var handle in metadata.TypeDefinitions)
+            {
+                scanned++;
+                var fullName = TypeDefinitionFullName(metadata, metadata.GetTypeDefinition(handle));
+                if (
+                    fullName.StartsWith(
+                        CoverageInstrumentationNamespacePrefix,
+                        StringComparison.Ordinal
+                    )
+                )
+                {
+                    matched.Add(fullName);
+                }
+            }
+
+            matched.Sort(StringComparer.Ordinal);
+            return (
+                matched.ToArray(),
+                $"metadata scan for type names starting '{CoverageInstrumentationNamespacePrefix}' over {scanned} type definition(s) in {path} -> {matched.Count} match(es)"
+            );
+        }
+        catch (Exception exception)
+            when (exception
+                    is IOException
+                        or BadImageFormatException
+                        or UnauthorizedAccessException
+                        or NotSupportedException
+            )
+        {
+            // A failed scan must never read as "not instrumented by assumption": it is reported as
+            // a failure and re-tried against the loaded assembly. The verdict still comes from
+            // evidence actually found, never from a default.
+            var (matched, scan) = ScanLoadedTypes(assembly);
+            return (
+                matched,
+                $"metadata scan of {path} failed ({exception.GetType().Name}: {exception.Message}); {scan}"
+            );
+        }
+    }
+
+    private static string TypeDefinitionFullName(
+        System.Reflection.Metadata.MetadataReader metadata,
+        System.Reflection.Metadata.TypeDefinition definition
+    )
+    {
+        var name = metadata.GetString(definition.Name);
+        var declaringType = definition.GetDeclaringType();
+        if (!declaringType.IsNil)
+        {
+            return TypeDefinitionFullName(metadata, metadata.GetTypeDefinition(declaringType))
+                + "+"
+                + name;
+        }
+
+        var @namespace = metadata.GetString(definition.Namespace);
+        return @namespace.Length == 0 ? name : @namespace + "." + name;
+    }
+
+    private static (string[] Matched, string Scan) ScanLoadedTypes(
+        System.Reflection.Assembly assembly
+    )
+    {
+        Type?[] loaded;
+        string? note = null;
+#pragma warning disable IL2026, IL3050
+        // Test-only reflection: this assembly is never trimmed or published.
+        try
+        {
+            loaded = assembly.GetTypes();
+        }
+        catch (System.Reflection.ReflectionTypeLoadException exception)
+        {
+            loaded = exception.Types;
+            note =
+                "partially loadable ("
+                + exception.LoaderExceptions.Length
+                + " loader exception(s))";
+        }
+        catch (Exception exception)
+        {
+            loaded = [];
+            note = exception.GetType().Name + ": " + exception.Message;
+        }
+#pragma warning restore IL2026, IL3050
+
+        var matched = loaded
+            .Where(type => type is not null)
+            .Select(type => type!.FullName ?? string.Empty)
+            .Where(name =>
+                name.StartsWith(CoverageInstrumentationNamespacePrefix, StringComparison.Ordinal)
+            )
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        return (
+            matched,
+            $"loaded-type scan for names starting '{CoverageInstrumentationNamespacePrefix}' over {loaded.Length} type(s) -> {matched.Length} match(es)"
+                + (note is null ? string.Empty : " | " + note)
+        );
+    }
+
+    // Runs the OLD detection and reports it: it is the hypothesis "HasCoverageInstrumentation
+    // returned false on Linux" made observable. A throw here is diagnostic gold — GetType resolving
+    // an injected type's dependencies is exactly what the metadata scan removed.
+    private static string DescribeLegacyProbe(System.Reflection.Assembly assembly)
+    {
+        var found = new List<string>();
+        var missed = new List<string>();
+        string? failure = null;
+#pragma warning disable IL2026
+        // Test-only reflection: this assembly is never trimmed or published.
+        try
+        {
+            foreach (var typeName in MeasuredCoverageInstrumentationTypeNames)
+            {
+                if (assembly.GetType(typeName, throwOnError: false) is null)
+                {
+                    missed.Add(typeName);
+                }
+                else
+                {
+                    found.Add(typeName);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            failure = exception.GetType().Name + ": " + exception.Message;
+        }
 #pragma warning restore IL2026
+
+        return "looked for "
+            + Render(MeasuredCoverageInstrumentationTypeNames)
+            + " | found "
+            + Render(found.ToArray())
+            + " | missed "
+            + Render(missed.ToArray())
+            + (failure is null ? string.Empty : " | threw " + failure);
+    }
+
+    private static void WriteDiagnostics(
+        System.Reflection.Assembly assembly,
+        InstrumentationProbe instrumentation,
+        string[] references,
+        string[] allowedReferences,
+        string[] coverageInjectedReferences,
+        string[] strippedReferences,
+        string[] unexpected,
+        string[] missing
+    )
+    {
+        Console.WriteLine("[refs] ---- PicoLog_ReferencesNoSerializer ----");
+        Console.WriteLine(
+            "[refs] assembly = "
+                + assembly.FullName
+                + " | location = "
+                + (ModulePath(assembly) ?? "unavailable")
+                + " | on-disk length = "
+                + DescribeModuleLength(assembly)
+        );
+        Console.WriteLine(
+            "[refs] os = "
+                + System.Runtime.InteropServices.RuntimeInformation.OSDescription
+                + " | architecture = "
+                + System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
+        );
+        Console.WriteLine("[refs] instrumentationPresent = " + instrumentation.IsPresent);
+        Console.WriteLine("[refs] instrumentation scan: " + instrumentation.Scan);
+        foreach (var typeName in instrumentation.MatchedTypeNames)
+        {
+            Console.WriteLine("[refs] instrumenter type = " + typeName);
+        }
+
+        Console.WriteLine("[refs] legacy exact-name probe: " + instrumentation.LegacyProbe);
+        WriteList("received", references);
+        WriteList("allowed", allowedReferences);
+        WriteList("stripped", strippedReferences);
+        WriteList("unexpected", unexpected);
+        WriteList("missing", missing);
+        Console.WriteLine(
+            "[refs] stripped-when-instrumented: " + Render(coverageInjectedReferences)
+        );
+    }
+
+    private static void WriteList(string label, string[] names)
+    {
+        // "joined length" is the number the red CI log made load-bearing ("differs at index 236"):
+        // printed for every list so that arithmetic never has to be guessed again.
+        Console.WriteLine(
+            $"[refs] {label}: count = {names.Length}, joined length = {string.Join(",", names).Length}"
+        );
+        for (var index = 0; index < names.Length; index++)
+        {
+            Console.WriteLine($"[refs] {label}[{index:D2}] = {names[index]}");
+        }
+    }
+
+    private static string DescribeModuleLength(System.Reflection.Assembly assembly)
+    {
+        var path = ModulePath(assembly);
+        return path is null ? "unavailable" : new FileInfo(path).Length + " bytes";
+    }
+
+    // " | "-joined, and never abbreviated: the whole point is a list a human can read in the log.
+    private static string Render(string[] names) => string.Join(" | ", names);
+
+    private sealed record InstrumentationProbe(
+        bool IsPresent,
+        string[] MatchedTypeNames,
+        string Scan,
+        string LegacyProbe
+    );
 
     private static bool HasPublicParameterlessDispose(Type type) =>
         type.GetMethods(
