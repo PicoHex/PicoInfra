@@ -214,7 +214,7 @@ public sealed class AssemblySurfaceTests
                     + Render(references)
             );
 
-        // The pin, unchanged: strip first, then compare exactly. The allow-list stays 11 entries
+        // The pin, unchanged: strip first, then compare exactly. The allow-list stays 12 entries
         // long, so anything that is not "the allow-list plus the measured instrumentation names" is
         // still red — the two assertions above only make the reason legible.
         await Assert
