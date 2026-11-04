@@ -202,6 +202,8 @@ new FileSink(new ConsoleFormatter(), new FileSinkOptions
 })
 ```
 
+`FileSink` writes the log as UTF-8 **without a byte-order mark** with **LF** line endings (not the platform's `Environment.NewLine`), and holds the file open with `FileShare.ReadWrite` so other processes can open the live file.
+
 ### Built-in — `PicoLog.Json`
 
 The sinks that own JSON live in the `PicoLog.Json` package, because the core package carries the

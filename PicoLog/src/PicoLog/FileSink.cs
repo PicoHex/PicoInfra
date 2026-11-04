@@ -47,16 +47,7 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
             }
         );
 
-        var fileStream = new FileStream(
-            _baseFilePath,
-            FileMode.OpenOrCreate,
-            FileAccess.Write,
-            FileShare.Read,
-            bufferSize: 4096,
-            useAsync: true
-        );
-
-        _writer = new StreamWriter(fileStream, Encoding.UTF8);
+        _writer = CreateWriter(OpenLogFile(_baseFilePath));
         _lastRotationTimestamp = DateTime.UtcNow.Ticks;
         // Seed the rotation counter from files already on disk so that a
         // process restart continues after the highest existing rotation index
@@ -64,6 +55,40 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
         _rotationIndex = GetExistingRotationIndex();
         _processingTask = ProcessWritesAsync();
     }
+
+    /// <summary>Opens the log file for writing under the sink's one share mode.
+    /// <para><b>FileShare.ReadWrite, not Read:</b> construction and rotation deliberately share
+    /// this single method. They had drifted apart into two copy-pasted <c>FileStream</c>
+    /// literals, which is how this file kept <c>FileShare.Read</c> — denying every other handle
+    /// that asks for write access (a rotator, a truncating log shipper, a second writer) for as
+    /// long as the sink is alive — long after <c>PicoLog.Json.JsonLogSink</c> had moved to
+    /// <c>FileShare.ReadWrite</c>. Windows sharing is bilateral: this share mode only governs
+    /// what <i>other</i> handles may request, so a plain tailer still has to share write
+    /// itself.</para></summary>
+    private static FileStream OpenLogFile(string path) =>
+        new(
+            path,
+            FileMode.OpenOrCreate,
+            FileAccess.Write,
+            FileShare.ReadWrite,
+            bufferSize: 4096,
+            useAsync: true
+        );
+
+    /// <summary>Wraps a log stream in the writer that fixes the bytes on disk.
+    /// <para><b>UTF8Encoding(encoderShouldEmitUTF8Identifier: false):</b> <see cref="Encoding.UTF8"/>
+    /// carries a preamble, and a <c>StreamWriter</c> over a stream positioned at offset 0 of an
+    /// empty file emits it, so byte 0 of every fresh log was 0xEF and the first line was not
+    /// plain text for anything that does not silently drop a BOM (grep, tail-based shippers,
+    /// strict parsers).</para>
+    /// <para><b>NewLine = "\n":</b> the default is <see cref="Environment.NewLine"/>, i.e. CRLF on
+    /// Windows, which leaves a stray CR at the end of every line on consumers that split on
+    /// LF. A log is a machine artefact and must encode identically on every platform.</para>
+    /// <para><b>AutoFlush keeps its default (false):</b> batching and the explicit
+    /// <see cref="FlushAsync"/> barrier are untouched — only the terminator and the preamble
+    /// change.</para></summary>
+    private static StreamWriter CreateWriter(FileStream stream) =>
+        new(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)) { NewLine = "\n" };
 
     public async Task WriteAsync(LogEntry entry, CancellationToken cancellationToken = default)
     {
@@ -235,15 +260,7 @@ public sealed class FileSink : ILogSink, IFlushableLogSink
             File.Move(_baseFilePath, rotatedPath, overwrite: false);
             CleanUpOldFiles();
 
-            var fs = new FileStream(
-                _baseFilePath,
-                FileMode.OpenOrCreate,
-                FileAccess.Write,
-                FileShare.Read,
-                bufferSize: 4096,
-                useAsync: true
-            );
-            _writer = new StreamWriter(fs, Encoding.UTF8);
+            _writer = CreateWriter(OpenLogFile(_baseFilePath));
             _rotationIndex++;
         }
     }

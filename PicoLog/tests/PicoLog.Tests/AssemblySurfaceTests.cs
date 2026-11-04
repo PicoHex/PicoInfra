@@ -117,6 +117,15 @@ public sealed class AssemblySurfaceTests
             "System.Linq",
             "System.Runtime",
             "System.Runtime.InteropServices",
+            // Not a serializer: this is the reference assembly that declares UTF8Encoding, and it
+            // is the only way to construct a UTF-8 encoding that emits no preamble. Encoding.UTF8
+            // (which needs nothing from here) is exactly what put a BOM in front of the first log
+            // line; the alternative, `new StreamWriter(stream)`, silently picks the internal
+            // UTF8NoBOM whose throwOnInvalidBytes is true, so a message carrying a sliced
+            // surrogate would throw EncoderFallbackException inside the sink instead of being
+            // replaced. The serializer assertion below still holds — this name matches none of
+            // its fragments.
+            "System.Text.Encoding.Extensions",
             "System.Threading",
             "System.Threading.Channels",
             "System.Threading.Thread",
