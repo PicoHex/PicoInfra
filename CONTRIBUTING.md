@@ -16,6 +16,14 @@ Build with AOT validation:
 dotnet build PicoInfra.slnx -p:PublishAot=true
 ```
 
+### NuGet audit suppression (`GHSA-p3jp-9v83-76w9`)
+
+`Directory.Build.props` carries a single id-scoped `NuGetAuditSuppress` for
+[`GHSA-p3jp-9v83-76w9`](https://github.com/advisories/GHSA-p3jp-9v83-76w9) - `Microsoft.DotNet.ILCompiler`
+< 10.0.14, which SDK 10.0.401 bundles at 10.0.12 and `PublishAot=true` pulls into every project.
+It hides only that one advisory, so any new advisory still fails the build. Remove it once the SDK
+bundles ILCompiler >= 10.0.14, verified by a real `dotnet publish -p:PublishAot=true`.
+
 ### Local package feed (`artifacts/nupkg`)
 
 `scripts/release.ps1` packs into `artifacts/nupkg`, and `restore` uses that folder as an extra
