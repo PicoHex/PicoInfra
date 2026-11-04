@@ -458,18 +458,28 @@ jobs:
           dotnet build PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-restore -p:UseProjectReferences=true
           dotnet build PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-restore -p:UseProjectReferences=true
 
+      # --coverage-output names the report, because the default is a GUID filename and the upload
+      # below needs to find it; the file lands in --results-directory, which is where the upload
+      # reads from. (The previous upload path - <project>/TestResults/**/coverage.cobertura.xml -
+      # matched nothing once --results-directory was passed, so the artifact was empty.)
       - name: Run PicoLog tests (coverage)
         if: matrix.rid == 'linux-x64'
-        run: dotnet test --project PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true --coverage --coverage-output-format cobertura -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
+        run: dotnet test --project PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true --coverage --coverage-output picolog-tests.cobertura.xml --coverage-output-format cobertura -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
       - name: Run PicoLog tests
         if: matrix.rid != 'linux-x64' && matrix.rid != 'linux-arm64'
         run: dotnet test --project PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
       - name: Run PicoLog tests (linux-arm64 — increased parallelism, I/O-bound on slow VM)
         if: matrix.rid == 'linux-arm64'
         run: dotnet test --project PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --maximum-parallel-tests 4 --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
-      # SeqSink's tests live here now (the sink moved into this package), so this step keeps the
-      # hang/crash-dump protection they had under the PicoLog.Tests steps above.
+      # SeqSink's tests live here now (the sink moved into this package), so these steps keep the
+      # hang/crash-dump protection they had under the PicoLog.Tests steps above - and the coverage
+      # leg runs them too: a PicoLog.Tests-only coverage leg describes a project that no longer
+      # holds SeqSink.cs, so covering both projects is what keeps the picture whole.
+      - name: Run PicoLog.Json tests (coverage)
+        if: matrix.rid == 'linux-x64'
+        run: dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true --coverage --coverage-output picolog-json-tests.cobertura.xml --coverage-output-format cobertura -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
       - name: Run PicoLog.Json tests
+        if: matrix.rid != 'linux-x64'
         run: dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
       - name: Upload hang/crash dumps
         if: always()
@@ -485,7 +495,11 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: coverage-picolog
-          path: PicoLog/tests/PicoLog.Tests/TestResults/**/coverage.cobertura.xml
+          # Both coverage legs write here (--coverage-output names the report in each of them).
+          # if-no-files-found: error, because an upload that silently matches nothing is how this
+          # artifact stayed empty: a green job and an empty zip look the same.
+          path: ${{ github.workspace }}/artifacts/test-results/*.cobertura.xml
+          if-no-files-found: error
 
       - name: AOT publish validation
         run: dotnet publish PicoLog/src/PicoLog/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release

@@ -224,8 +224,10 @@ new SeqSink(new HttpClient { BaseAddress = new Uri("http://localhost:5341") },
     enableConsoleFallback: true)
 ```
 
-`SeqSink` moved here from the core package; `using PicoLog;` and `new SeqSink(...)` still compile —
-the only thing a consumer adds is the package reference.
+`SeqSink` moved here from the core package, so a consumer's **source** needs one thing: the package
+reference — `using PicoLog;` and `new SeqSink(...)` still compile. An assembly that was already
+compiled against the old `PicoLog` cannot be reused, though: there is no type forwarder and no
+`[Obsolete]` stub, so it must be recompiled against `PicoLog.Json` (see [Package move](#packages)).
 
 Both sinks write through PicoJetson's `JsonWriter`, so the batch body is UTF-8 from the first byte:
 no `StringBuilder`, no per-entry string, and no hand-rolled escaper. Measured on the 100-entry
@@ -438,6 +440,15 @@ container.AddPicoLog(o =>
 
 All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 
+`picolog.writes.rejected_after_shutdown` is the one counter a sink in *another* package has to
+record from outside this assembly, so `PicoLogMetrics.RecordRejectedAfterShutdown()` is
+**public**: call it once per write you refuse because your sink is already closed (`SeqSink` and
+`FileSink` both do). Every other recorder on `PicoLogMetrics` is `internal`, and recording is a
+stateless `Add(1)` on the shared instrument, so the method carries no behaviour of its own. The
+repository has **no public-API baseline** — no `PublicAPI*.txt` anywhere and no ApiCompat in
+`Directory.Build.props` — so a widening like this is recorded here and in the commit that makes
+it, not by a build that fails on the diff.
+
 ## Packages
 
 | Package | TFM | Description |
@@ -449,8 +460,20 @@ All metrics are AOT-compatible and integrate with OpenTelemetry collectors.
 | **PicoLog.Json** | net10.0 | The JSON sinks: `JsonLogSink` (NDJSON file) and `SeqSink` (batched Seq HTTP), both written with the PicoJetson `JsonWriter` |
 
 **Package move.** `SeqSink` moved from `PicoLog` to `PicoLog.Json` — same type, same
-`namespace PicoLog`, no code change on the caller's side; add `dotnet add package PicoLog.Json`.
-Core `PicoLog` no longer references any serializer (it never did), which is why the sink that must
-write JSON cannot live there.
+`namespace PicoLog`, so a **source** build needs one line: `dotnet add package PicoLog.Json`.
+No source change follows: `using PicoLog;` and `new SeqSink(...)` still compile.
+
+It is **not binary-compatible.** An assembly compiled against `PicoLog` ≤ 2026.10 holds a
+`PicoLog.SeqSink` type reference into the assembly `PicoLog`, and that type is no longer in it, so
+the first use throws `TypeLoadException`. Recompile it against `PicoLog.Json` — and note that
+both escape hatches a version like this usually ships are refused on purpose:
+
+- a `[TypeForwardedTo(typeof(SeqSink))]` in `PicoLog` would make `PicoLog.dll` reference
+  `PicoLog.Json.dll`, and through it the serializer — exactly the dependency this split removes;
+- an `[Obsolete]` stub left behind in `PicoLog` would have to keep the JSON-writing code, which is
+  the same dependency with a deprecation notice on it.
+
+Core `PicoLog` therefore references no serializer at all (it never did), and a test pins its whole
+referenced-assembly list, so a sink that must write JSON cannot live there.
 
 [← Back to PicoInfra](../README.md)
