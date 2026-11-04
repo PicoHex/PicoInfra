@@ -73,7 +73,7 @@ using PicoLog;
 using PicoLog.Abs;
 
 var sink = new ColoredConsoleSink(new ConsoleFormatter());
-using var factory = new LoggerFactory([sink],
+await using var factory = new LoggerFactory([sink],
     new LoggerFactoryOptions { MinLevel = LogLevel.Info });
 var logger = factory.CreateLogger("App");
 logger.Info("Application started");
@@ -99,7 +99,7 @@ logger.Info("Application started");
 ### LoggerFactory
 
 ```csharp
-using var factory = new LoggerFactory(
+await using var factory = new LoggerFactory(
     sinks: [new ColoredConsoleSink(new ConsoleFormatter())],
     options: new LoggerFactoryOptions
     {
@@ -355,14 +355,21 @@ var options = new LoggerFactoryOptions
 ## Flush & Shutdown
 
 ```csharp
-using var factory = new LoggerFactory(sinks, options);
+await using var factory = new LoggerFactory(sinks, options);
 
 // Flush without shutdown — drains pending entries, factory remains usable
 await factory.FlushAsync();
 
-// Dispose drains all pipelines and sinks, aggregates errors
-await factory.DisposeAsync();
+// Leaving the scope runs DisposeAsync(): it drains all pipelines and sinks and
+// aggregates sink errors. Do not call DisposeAsync() again — `await using` owns it.
 ```
+
+Disposal is asynchronous, and that is the whole contract: `LoggerFactory` derives from
+`ILoggerFactory`, which implements `IAsyncDisposable`, and nothing in `PicoLog` implements
+`IDisposable`. A caller who writes `using var factory = new LoggerFactory(sinks);` gets a compile
+error — `CS8418: 'LoggerFactory': type used in a using statement must implement
+'System.IDisposable'. Did you mean 'await using' rather than 'using'?` — so every factory in this
+README is released with `await using`.
 
 Set `ShutdownTimeout` to bound the drain:
 
