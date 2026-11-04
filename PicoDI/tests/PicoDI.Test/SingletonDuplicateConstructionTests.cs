@@ -7,9 +7,15 @@ namespace PicoDI.Test;
 /// on this tree with a gate inside the factory (every build held before it can be published, 2/4/8/16
 /// threads, three trials each): the factory ran exactly once per thread — 2, 4, 8 and 16 calls — every
 /// call produced a distinct instance, exactly <i>one</i> instance was returned to all callers, and
-/// <c>threads - 1</c> duplicates were disposed (1, 3, 7, 15). With the plain barrier-only race a caller
-/// actually hits, 20 trials per size gave 1–2 calls at 2 threads (18/20 over one) and 2–6 calls at
-/// 4/8/16 threads (20/20 over one).
+/// <c>threads - 1</c> duplicates were disposed (1, 3, 7, 15). That exactness is the gate's doing, which
+/// is why the assertion below pins the count to <c>Threads</c> rather than to "more than one".
+/// </para>
+/// <para>
+/// With the plain barrier-only race a caller actually hits, the count is scheduler- and
+/// machine-dependent — 20 trials per size measured 1–2 calls at 2 threads (18/20 over one) and, at
+/// 4/8/16 threads, 2–4 / 2–5 / 3–7 on the reviewer's machine (20/20 over one). So that race is
+/// described here, not pinned: it only ever guarantees "more than one", which is precisely the weak
+/// pin this test does not use.
 /// </para>
 /// <para>
 /// The duplicate build is deliberate, not a leak: the factory runs outside
@@ -36,7 +42,7 @@ public class SingletonDuplicateConstructionTests
     }
 
     [Test]
-    public async Task ConcurrentFirstResolve_MoreThanOneFactoryCall_OneInstancePublished_ExtrasDisposed()
+    public async Task ConcurrentFirstResolve_OneFactoryCallPerThread_OneInstancePublished_ExtrasDisposed()
     {
         var container = new SvcContainer(autoConfigureFromGenerator: false);
         using var gate = new ManualResetEventSlim(false);
@@ -100,14 +106,21 @@ public class SingletonDuplicateConstructionTests
             var published = returned.Distinct().ToArray();
             var duplicatesDisposed = built.Count(static b => Volatile.Read(ref b.DisposeCount) > 0);
 
-            // The pin: construction is not single-flight, so concurrent first resolves call the
-            // factory more than once. Making construction single-flight turns this red.
+            // The pin: construction is neither single-flight nor partly serialised, so every thread
+            // that missed the unbuilt singleton runs the factory. The gate in the factory above is
+            // what makes the count exact — it holds each build until every caller is either inside
+            // the factory or already finished, so all Threads callers are inside at once and each of
+            // them builds. "More than one" would not be enough: a regression that serialises even
+            // some callers (e.g. a lock taken on the even-numbered builds) halves the count and would
+            // still satisfy > 1, while this equality goes red.
             await Assert
                 .That(calls)
-                .IsGreaterThan(1)
+                .IsEqualTo(Threads)
                 .Because(
-                    $"concurrent first resolves are expected to race and build duplicates "
-                        + $"(measured {calls} factory calls for {Threads} threads)"
+                    $"every thread that misses the unbuilt singleton must run the factory; the "
+                        + $"in-factory gate holds each build until all callers are inside, so the "
+                        + $"count is exactly the thread count (measured {calls} factory calls for "
+                        + $"{Threads} threads)"
                 );
 
             // ... but only one of those builds is ever published, and every caller gets it.

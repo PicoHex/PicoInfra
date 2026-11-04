@@ -7,10 +7,12 @@ namespace PicoDI.Test;
 /// singleton, so a <c>Scoped</c> dependency the factory resolves is built there: it is not the
 /// requesting scope's own instance, it survives that scope's <c>DisposeAsync</c>, every scope that
 /// resolves the singleton shares it, and it lives until container disposal — released <i>after</i> the
-/// singleton that captured it, so the singleton may still use it from its own <c>Dispose</c>. Measured
-/// on this tree: the captured instance was created in the implicit root scope (never in the requesting
-/// scope), survived the disposal of three sibling scopes, and was disposed exactly once, at container
-/// disposal, while each sibling scope's own scoped instance died with its scope.
+/// singleton that captured it, so the singleton may still use it from its own <c>Dispose</c>. A
+/// <i>transient</i> the same factory resolves is captive in exactly the same way, because the root
+/// scope is what tracks and disposes it. Measured on this tree: the captured instances were created in
+/// the implicit root scope (never in the requesting scope), survived the disposal of the two sibling
+/// scopes, and were each disposed exactly once, at container disposal, while each sibling scope's own
+/// scoped instance died with its scope.
 /// </para>
 /// <para>
 /// Nothing warns, and the reason is structural rather than an oversight: a singleton has no channel to a
@@ -37,30 +39,55 @@ public class CaptiveDependencyPromotionTests
         }
     }
 
+    /// <summary>A transient captured by the same singleton — the other lifetime that goes captive.</summary>
+    private sealed class TransientUnitOfWork(ISvcScope createdIn, ContainerProbe owner)
+        : IDisposable
+    {
+        public int DisposeCount;
+
+        public ISvcScope CreatedIn { get; } = createdIn;
+
+        public void Dispose()
+        {
+            Interlocked.Increment(ref DisposeCount);
+            Interlocked.Increment(ref owner.TransientDisposals);
+        }
+    }
+
     private sealed class ContainerProbe
     {
         public int ScopedDisposals;
+        public int TransientDisposals;
     }
 
     /// <summary>The singleton that captures a scoped dependency — the captive edge itself.</summary>
-    private sealed class CaptiveSingleton(ScopedUnitOfWork dependency) : IDisposable
+    private sealed class CaptiveSingleton(
+        ScopedUnitOfWork dependency,
+        TransientUnitOfWork transient
+    ) : IDisposable
     {
         public ScopedUnitOfWork Dependency { get; } = dependency;
+
+        public TransientUnitOfWork Transient { get; } = transient;
 
         public int DisposeCount;
 
         /// <summary>Was the captured dependency still alive when this singleton was disposed?</summary>
         public bool DependencyAliveAtOwnDisposal { get; private set; }
 
+        /// <summary>Was the captured transient still alive when this singleton was disposed?</summary>
+        public bool TransientAliveAtOwnDisposal { get; private set; }
+
         public void Dispose()
         {
             Interlocked.Increment(ref DisposeCount);
             DependencyAliveAtOwnDisposal = Volatile.Read(ref Dependency.DisposeCount) == 0;
+            TransientAliveAtOwnDisposal = Volatile.Read(ref Transient.DisposeCount) == 0;
         }
     }
 
     [Test]
-    public async Task ScopedDepCapturedBySingleton_IsPromotedToRootScope_OutlivesRequestingScopes_DiesWithContainer()
+    public async Task ScopedAndTransientDepCapturedBySingleton_ArePromotedToRootScope_OutliveRequestingScopes_DieWithContainer()
     {
         var probe = new ContainerProbe();
         var container = new SvcContainer(autoConfigureFromGenerator: false);
@@ -69,11 +96,18 @@ public class CaptiveDependencyPromotionTests
         CaptiveSingleton? singleton = null;
 
         container.RegisterScoped<ScopedUnitOfWork>(scope => new ScopedUnitOfWork(scope, probe));
+        container.RegisterTransient<TransientUnitOfWork>(scope => new TransientUnitOfWork(
+            scope,
+            probe
+        ));
         container.RegisterSingleton<CaptiveSingleton>(scope =>
         {
             singletonFactoryScope = scope;
             Interlocked.Increment(ref singletonFactoryCalls);
-            return singleton = new CaptiveSingleton(scope.GetService<ScopedUnitOfWork>());
+            return singleton = new CaptiveSingleton(
+                scope.GetService<ScopedUnitOfWork>(),
+                scope.GetService<TransientUnitOfWork>()
+            );
         });
         container.Build();
 
@@ -90,6 +124,7 @@ public class CaptiveDependencyPromotionTests
         var scopeBOwned = scopeB.GetService<ScopedUnitOfWork>();
 
         var captured = singleton!.Dependency;
+        var capturedTransient = singleton.Transient;
 
         await Assert
             .That(ReferenceEquals(fromA, fromB))
@@ -128,6 +163,16 @@ public class CaptiveDependencyPromotionTests
                     + "dependency is not disposed with the scope that triggered it"
             );
 
+        // The transient the factory resolved went the same way: the root scope, not scope A, is what
+        // tracks it, so the scope that triggered the singleton's construction never sees it.
+        await Assert
+            .That(Volatile.Read(ref capturedTransient.DisposeCount))
+            .IsEqualTo(0)
+            .Because(
+                "a transient the singleton factory resolved is tracked by the root scope, not by the "
+                    + "requesting scope, so disposing that scope must not release it"
+            );
+
         // ... and it is not either scope's own instance, however long the scopes live.
         await Assert
             .That(ReferenceEquals(scopeAOwned, captured))
@@ -159,6 +204,13 @@ public class CaptiveDependencyPromotionTests
             .Because(
                 "the captured scoped dependency must be created in the root scope, not in scope A"
             );
+        await Assert
+            .That(ReferenceEquals(capturedTransient.CreatedIn, implicitRoot))
+            .IsTrue()
+            .Because(
+                "the captured transient must be created in the root scope too — that is what makes "
+                    + "its disposal the container's, not the requesting scope's"
+            );
 
         // ... and container disposal is what finally releases it, after the singleton that captured it.
         await container.DisposeAsync();
@@ -167,6 +219,12 @@ public class CaptiveDependencyPromotionTests
             .That(Volatile.Read(ref captured.DisposeCount))
             .IsEqualTo(1)
             .Because("the promoted instance lives until container disposal");
+        await Assert
+            .That(Volatile.Read(ref capturedTransient.DisposeCount))
+            .IsEqualTo(1)
+            .Because(
+                "the captured transient lives until container disposal too, and is released once"
+            );
         await Assert
             .That(Volatile.Read(ref singleton!.DisposeCount))
             .IsEqualTo(1)
@@ -178,8 +236,19 @@ public class CaptiveDependencyPromotionTests
                 "singletons are released before the root scope, so a Dispose may still use them"
             );
         await Assert
+            .That(singleton.TransientAliveAtOwnDisposal)
+            .IsTrue()
+            .Because(
+                "singletons are released before the root scope, so a Dispose may still use the "
+                    + "transient it captured"
+            );
+        await Assert
             .That(Volatile.Read(ref probe.ScopedDisposals))
             .IsEqualTo(3)
             .Because("three scoped instances were built and each was disposed exactly once");
+        await Assert
+            .That(Volatile.Read(ref probe.TransientDisposals))
+            .IsEqualTo(1)
+            .Because("one transient was built and it was disposed exactly once");
     }
 }
