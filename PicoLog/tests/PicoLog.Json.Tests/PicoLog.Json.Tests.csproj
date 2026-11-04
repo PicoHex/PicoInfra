@@ -11,6 +11,15 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" />
+    <!--
+      ci.yml runs this project with the hang-dump and crash-dump switches (hangdump, crashdump),
+      exactly like PicoLog.Tests does. Microsoft.Testing.Platform only exposes those switches when
+      the extension is referenced by the test host, so without these two references the host
+      answers "Unknown option", runs zero tests and exits 5. Versions come from
+      Directory.Packages.props (central package management): do not pin them here.
+    -->
+    <PackageReference Include="Microsoft.Testing.Extensions.HangDump" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CrashDump" />
   </ItemGroup>
 
   <ItemGroup>
