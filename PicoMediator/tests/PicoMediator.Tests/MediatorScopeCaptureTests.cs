@@ -185,4 +185,71 @@ public class MediatorScopeCaptureTests
 
         await scopedContainer.DisposeAsync();
     }
+
+    /// <summary>
+    /// Pins the other consequence the docs promise: with a <c>Singleton</c> mediator a disposable
+    /// <b>transient</b> handler is created (and therefore tracked for disposal) by the
+    /// container-internal root scope, so a caller scope's <c>DisposeAsync</c> does not touch it and
+    /// only container disposal releases it.
+    /// </summary>
+    /// <remarks>
+    /// This is the default auto-registration path — PicoMediator.Gen registers generated handlers
+    /// as Transient — so it is the half of the documented contract that can rot silently.
+    /// <c>ResolveTransient</c> (<c>PicoDI/src/PicoDI/SvcScope.Resolution.cs</c>) queues disposable
+    /// transients on the <i>resolving</i> scope, and for a Singleton mediator the resolving scope is
+    /// the root one. Measured in <c>review-2026-11-02/mediator-scope-observation.md</c> §3.4
+    /// (<c>transient-H#9,#11,#12,#15,#16</c>: "all held until container disposal … 5 rooted
+    /// disposables after 5 publishes").
+    /// </remarks>
+    [Test]
+    public async Task AddPicoMediator_Singleton_RetainsDisposableTransientHandlersUntilContainerDisposal()
+    {
+        var created = new List<DisposalTrackedSubscriber>();
+
+        var container = new SvcContainer(autoConfigureFromGenerator: false);
+        container.RegisterTransient<ISubscriber<ScopedEvent>>(_ =>
+        {
+            var subscriber = new DisposalTrackedSubscriber();
+            created.Add(subscriber);
+            return subscriber;
+        });
+        container.AddPicoMediator(SvcLifetime.Singleton, autoRegisterHandlers: false);
+        container.Build();
+
+        var scope1 = container.CreateScope();
+        var scope2 = container.CreateScope();
+
+        await scope1.GetService<IMediator>().Publish(new ScopedEvent());
+        await scope2.GetService<IMediator>().Publish(new ScopedEvent());
+
+        await Assert
+            .That(created.Count)
+            .IsEqualTo(2)
+            .Because(
+                "a Transient handler is still one instance per publish through a Singleton "
+                    + "mediator — the promotion applies to Scoped handlers only"
+            );
+
+        // The sibling scopes own none of them: their disposal must not release retained handlers.
+        await scope1.DisposeAsync();
+        await Assert
+            .That(created[0].DisposeCount)
+            .IsEqualTo(0)
+            .Because("the transient handler was created in the root scope, not in a caller scope");
+        await Assert.That(created[1].DisposeCount).IsEqualTo(0);
+
+        await scope2.DisposeAsync();
+        await Assert.That(created[0].DisposeCount).IsEqualTo(0);
+        await Assert.That(created[1].DisposeCount).IsEqualTo(0);
+
+        // …and container disposal releases both: retention ends where the root scope is disposed.
+        await container.DisposeAsync();
+        await Assert
+            .That(created[0].DisposeCount)
+            .IsEqualTo(1)
+            .Because(
+                "root-scope tracking releases retained transients when the container disposes"
+            );
+        await Assert.That(created[1].DisposeCount).IsEqualTo(1);
+    }
 }
