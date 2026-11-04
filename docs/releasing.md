@@ -45,6 +45,10 @@ this branch was cut from (`5f85fc2`).
   happens as part of applying the release, not before it.
 - Adding or removing a packable project changes the baseline set itself — that is a deliberate act,
   not a side effect of a build.
+- **Run the dry run and the apply step from a checkout with no live `.worktrees/*`.** The extractor
+  recurses the repository root for `*.csproj`, so a nested checkout under `.worktrees/` contributes a
+  second copy of every packable project and the tool stops with `duplicate PackageId across packable
+  projects`. Remove the worktree rather than working around it by copying the repository elsewhere.
 
 ## `main` is the only release branch
 
