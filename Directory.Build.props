@@ -68,6 +68,38 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
+  <!-- ===== Test / verification projects: managed build, AOT analysis kept =====
+
+       A project whose parent folder is `tests` is a test host (TUnit on
+       Microsoft.Testing.Platform) or a compile/run gate - never a shipping
+       artefact. Shipping code lives under src/, samples/ and benchmarks/, so this
+       condition cannot reach it; it is the same split PicoInfra.slnx uses.
+
+       Why PublishAot=false is a correctness fix, not a convenience:
+       PublishAot=true does not only affect `dotnet publish`. It also makes the SDK
+       emit an AOT-shaped runtimeconfig.json for the ordinary managed build, with
+       System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported=false.
+       `dotnet test` still runs the assembly on the JIT, but Microsoft.Testing.Platform's
+       CodeCoverage extension reads that flag to choose its in-process path, expects a
+       pre-instrumented (native) binary, instruments nothing and writes an empty report
+       (<packages />, 181 B, 0 classes). With PublishAot=false the extension takes its
+       instrumentation path and the report carries real data.
+
+       IsAotCompatible=true keeps the AOT/trim Roslyn analyzers (IL2xxx/IL3xxx) running
+       on test code, so what `dotnet build` proves about AOT compatibility (the
+       211-warning baseline) is unchanged - only the publish-time config shape is.
+
+       Escape hatch: a command-line -p:PublishAot=true is a global property and still
+       wins over this block, so `dotnet publish <test project>` keeps working. -->
+  <PropertyGroup>
+    <_PicoParentFolder>$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('$(MSBuildProjectDirectory)'))))</_PicoParentFolder>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_PicoParentFolder)' == 'tests'">
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
   <!-- Libraries: declare AOT-compatible but do not self-publish.
        Only for TFMs that support AOT (net8.0+). -->
   <PropertyGroup>
