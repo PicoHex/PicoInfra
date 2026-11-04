@@ -697,14 +697,19 @@ public sealed class LoggerFactoryTests
     [Test]
     public async Task Wait_Mode_BlocksSyncWrites_UntilQueueSpaceIsAvailable()
     {
-        var sink = new BlockingSink();
+        var sink = new ThreadGateSink();
         long reportedDropCount = 0;
-        // Use a generous timeout to tolerate thread-pool scheduling delays
-        // on slow CI runners (coverage instrumentation + limited CPU cores).
-        // After sink.Release(), the processing continuation is scheduled on
-        // the thread pool; if all pool threads are busy, the backoff loop
-        // for the third write can time out before the processor gets a chance
-        // to drain the queue.
+        // Room in the queue appears only when the pipeline finishes the write that is in flight, so
+        // this test owns the thread that write is parked on (ThreadGateSink blocks its caller's own
+        // thread on an OS gate and Release hands it straight back). With an awaiting sink, as this
+        // test used to use, making room needed a ThreadPool thread to resume the pipeline's
+        // continuation, which turned the interval into a scheduling quantity: measured 17-36 ms
+        // idle and 1.0 s / 3.9 s / 8.8 s with the whole suite on a 4-vCPU view while 16 CPU burners
+        // run. The last one outlives the 5 s SyncWriteTimeout the queued write is given, so the
+        // write was dropped and the count below read 2 instead of 3. Nothing here asserts how long
+        // anything took: the 300 ms window is a "must not happen yet" check and the 60 s one is a
+        // deadlock guard, both sampled on this thread against Stopwatch, so a loaded ThreadPool can
+        // neither stretch them nor end them early.
         var options = new LoggerFactoryOptions
         {
             QueueCapacity = 1,
@@ -715,7 +720,10 @@ public sealed class LoggerFactoryTests
         await using var factory = new LoggerFactory([sink], options);
         var logger = factory.CreateLogger("Tests.Category");
 
-        Task thirdWrite;
+        Thread? thirdWriter = null;
+        var thirdWriteReturned = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
         try
         {
@@ -723,16 +731,37 @@ public sealed class LoggerFactoryTests
             await sink.WriteStarted; // ensure "first" is dequeued and blocking inside the sink
             logger.Info("second"); // now fills the capacity-1 queue
 
-            thirdWrite = Task.Run(() => logger.Info("third"));
+            // The third write gets its own thread rather than the pool: its backoff loop is an OS
+            // sleep on the writing thread, and running it on the pool would make the pool part of
+            // the object under test.
+            thirdWriter = new Thread(() =>
+            {
+                try
+                {
+                    logger.Info("third");
+                }
+                finally
+                {
+                    thirdWriteReturned.TrySetResult();
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "PicoLog.Test.ThirdWriter",
+            };
+            thirdWriter.Start();
 
-            // Use Thread.Sleep instead of Task.Delay to avoid the ThreadPool
-            // callback delay that can occur on saturated CI runners. Task.Delay
-            // completion depends on a timer callback being picked up by the
-            // ThreadPool; when the third write holds a ThreadPool thread for
-            // its backoff loop, the callback can be starved, causing the
-            // assertion to run after the SyncWriteTimeout has expired.
-            Thread.Sleep(300);
-            await Assert.That(thirdWrite.IsCompleted).IsFalse();
+            // Outcome assertion: a full Wait-mode queue must hold the writer. It cannot be admitted
+            // earlier than this check anyway — only the in-flight write can free the slot, and that
+            // write has not been released — so this states the back-pressure property as a fact
+            // instead of using a delay to let the situation arise.
+            await Assert
+                .That(StaysIncomplete(thirdWriteReturned.Task, BlockedObservationWindow))
+                .IsTrue()
+                .Because(
+                    "a full Wait-mode queue must block a sync write, not admit it past capacity and"
+                        + " not drop it at once"
+                );
             await Assert.That(sink.WrittenCount).IsEqualTo(1);
         }
         finally
@@ -740,11 +769,65 @@ public sealed class LoggerFactoryTests
             sink.Release();
         }
 
-        await thirdWrite;
+        await Assert
+            .That(await CompletesWithinAsync(thirdWriteReturned.Task, SyncWriteDeadlockGuard))
+            .IsTrue()
+            .Because(
+                "the third write must return once the queue has room; it was still in its backoff"
+                    + $" loop {SyncWriteDeadlockGuard.TotalSeconds:0} s later, which is a stuck"
+                    + " writer, not a slow one."
+            );
+        thirdWriter.Join();
         await factory.DisposeAsync();
 
-        await Assert.That(sink.WrittenCount).IsEqualTo(3);
+        // What the pipeline observed: every write arrived, none was dropped, and they arrived in the
+        // order they were written — the blocked write was admitted, not replaced and not lost.
         await Assert.That(reportedDropCount).IsEqualTo(0);
+        await Assert.That(sink.WrittenCount).IsEqualTo(3);
+        await Assert
+            .That(string.Join("|", sink.Entries.Select(static entry => entry.Message)))
+            .IsEqualTo("first|second|third");
+    }
+
+    /// <summary>
+    /// How long a sync write is observed before it may be admitted. Not a duration assertion: "has
+    /// not happened yet" can only be checked over a window, and this one is sampled on the calling
+    /// thread against a monotonic clock, so a starved ThreadPool can neither shorten the window nor
+    /// make the sample miss it.
+    /// </summary>
+    private static readonly TimeSpan BlockedObservationWindow = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>
+    /// Deadlock guard for a sync write that must return once its queue has room. Never read a value
+    /// near this bound as a timing measurement.
+    /// </summary>
+    private static readonly TimeSpan SyncWriteDeadlockGuard = TimeSpan.FromSeconds(60);
+
+    private static bool StaysIncomplete(Task task, TimeSpan window)
+    {
+        var startTimestamp = Stopwatch.GetTimestamp();
+        while (Stopwatch.GetElapsedTime(startTimestamp) < window)
+        {
+            if (task.IsCompleted)
+                return false;
+
+            Thread.Sleep(1);
+        }
+
+        return !task.IsCompleted;
+    }
+
+    private static async Task<bool> CompletesWithinAsync(Task task, TimeSpan guard)
+    {
+        try
+        {
+            await task.WaitAsync(guard);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
     }
 
     [Test]
@@ -1655,6 +1738,47 @@ public sealed class LoggerFactoryTests
         }
 
         public void Release() => _release.TrySetResult();
+
+        public void Dispose() => Release();
+
+        public ValueTask DisposeAsync()
+        {
+            Release();
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>
+    /// A sink that holds its caller's <em>thread</em> on an OS gate instead of holding a pending
+    /// <see cref="Task"/>. Releasing it hands that same thread straight back, so a test can make
+    /// room in a full queue without waiting for a ThreadPool thread to run a continuation — see
+    /// <see cref="Wait_Mode_BlocksSyncWrites_UntilQueueSpaceIsAvailable"/>.
+    /// </summary>
+    private sealed class ThreadGateSink : ILogSink
+    {
+        private readonly ConcurrentQueue<LogEntry> _entries = [];
+        private readonly ManualResetEventSlim _gate = new(initialState: false);
+        private readonly TaskCompletionSource _writeStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private int _writtenCount;
+
+        public IReadOnlyCollection<LogEntry> Entries => _entries.ToArray();
+
+        public int WrittenCount => Volatile.Read(ref _writtenCount);
+
+        public Task WriteStarted => _writeStarted.Task;
+
+        public Task WriteAsync(LogEntry entry, CancellationToken cancellationToken = default)
+        {
+            _entries.Enqueue(entry);
+            Interlocked.Increment(ref _writtenCount);
+            _writeStarted.TrySetResult();
+            _gate.Wait(cancellationToken);
+            return Task.CompletedTask;
+        }
+
+        public void Release() => _gate.Set();
 
         public void Dispose() => Release();
 
