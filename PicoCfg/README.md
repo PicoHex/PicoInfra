@@ -56,7 +56,11 @@ contains `':'` addresses the same key as real nesting, and the later value silen
 YAML and TOML keep the name as written and reject the result: one document may not produce the same
 key from two different positions, and that is a `CfgKeyCollisionException` — thrown from `BuildAsync`
 (or when a watched file reopens), never from a later lookup — which carries the key, the format and
-both positions (line + raw path segments), so the two places can be found and renamed.
+both positions (line + raw path segments), so the two places can be found and renamed. Those are
+`Key`, `Format`, `ExistingPosition` and `IncomingPosition`; the exception lives in `PicoCfg.Abs`
+and derives from `InvalidOperationException` — so an existing `catch (InvalidOperationException)`
+around `BuildAsync` still catches it. `ExistingPosition` is `null` only for the INI case below,
+where no other spelling produced the key.
 
 INI is stricter, because it already nests with `'.'`: `':'` is the separator and not a legal character
 inside a section name or a key, so `[A:C]` — and `B:C=1`, and `[A.C]` together with `[A:C]` — is
@@ -76,6 +80,29 @@ What is *not* a collision:
 
 `PicoCfg.Json` is not covered yet: it flattens the same way, so `{"a:b": 1}` and `{"a":{"b": 1}}`
 still land on one key there, with the later value winning.
+
+### Arrays and Sequences
+
+`AddYaml` / `AddYamlFile` (`PicoCfg.Yaml`) and `AddToml` / `AddTomlFile` (`PicoCfg.Toml`) take an
+optional `flattenArrays` flag, `false` by default — the same flag `AddJson` / `AddJsonFile` carry.
+
+```csharp
+using PicoCfg;
+using PicoCfg.Toml;
+using PicoCfg.Yaml;
+
+var cfg = await Cfg.CreateBuilder()
+    .AddYamlFile("servers.yaml", flattenArrays: true)  // Servers:0, Servers:1
+    .AddTomlFile("app.toml", flattenArrays: true)      // ports:0, servers:0:name
+    .BuildAsync();
+```
+
+Off (the default) an array or sequence is skipped entirely; on, every element contributes a numeric
+index segment — the list format `CfgBind` binds to `List<T>`, `T[]` and the nested collection
+shapes: `ports:0` for a TOML value array, `servers:0:name` for a TOML array of tables, `Servers:1`
+for a YAML sequence of scalars. A YAML sequence of mappings is the one shape the reader does not
+split — the first member of a `- name: x` item arrives as that item's own value (`Items:0` is
+`"name: x"`, the rest under `Items:0:port`) — so bind a sequence of scalars from YAML.
 
 ## CfgBuilder
 

@@ -19,7 +19,7 @@ PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries th
 |---|---|---|
 | **PicoDI** | Dependency Injection | `PicoDI` `PicoDI.Abs` |
 | **PicoCfg** | Configuration | `PicoCfg` `PicoCfg.Abs` `PicoCfg.*` |
-| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` |
+| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` `PicoLog.Json` |
 | **PicoAop** | AOT Interception (AOP) | `PicoAop.Abs` `PicoAop.DI` |
 | **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` |
 | **PicoSchedule** | Embedded AOT Scheduling (cron) | `PicoSchedule` |
@@ -185,7 +185,7 @@ var settings = CfgBind.Bind<AppSettings>(cfg, "App");
   - Environment variables (`__` → `:`)
   - Command-line args (`--key=value`, `--key value`, `/key`)
   - Key-per-file directory
-  - JSON, YAML, INI, TOML (separate packages: `PicoCfg.Json`, `PicoCfg.Yaml`, etc.) — file sources (`AddJsonFile`, `AddYamlFile`, `AddIniFile`, `AddTomlFile`) are file-watching with debounced auto-reload; string sources (`AddJson(string)`, …) are static
+  - JSON, YAML, INI, TOML (separate packages: `PicoCfg.Json`, `PicoCfg.Yaml`, etc.) — file sources (`AddJsonFile`, `AddYamlFile`, `AddIniFile`, `AddTomlFile`) are file-watching with debounced auto-reload; string sources (`AddJson(string)`, …) are static; JSON, YAML and TOML sources take `flattenArrays: true` to index array elements (`Items:0`, `servers:0:name`) instead of skipping them
   - **Ambiguous text keys throw** — YAML and TOML flatten a document into one `':'`-separated key space, so a name carrying its own `':'` that lands on an existing key is a `CfgKeyCollisionException` at `BuildAsync`, naming the key and both positions instead of silently overwriting; INI rejects `':'` inside a section name or key outright (it nests with `.` already), so `[A.C]` and `[A:C]` can no longer merge into one section. Duplicate keys inside one mapping stay last-wins, and `':'` inside a value is untouched
 - **Binding (`PicoCfg.Gen`):**
   - Generates `Bind<T>` / `TryBind<T>` / `BindInto<T>` delegates for any type used with `CfgBind.Bind<T>()`
@@ -448,7 +448,7 @@ var mediator = scope.GetService<IMediator>();
 | Package | Description |
 |---|---|
 | **PicoCfg** | Async-first configuration root, builder, providers (env, cmd-line, stream, dictionary, key-per-file) |
-| **PicoCfg.Abs** | Configuration abstractions (`ICfg`, `ICfgRoot`, `ICfgSource`, `ICfgProvider`, `ICfgSnapshot`) |
+| **PicoCfg.Abs** | Configuration abstractions (`ICfg`, `ICfgRoot`, `ICfgSource`, `ICfgProvider`, `ICfgSnapshot`, `CfgKeyCollisionException`) |
 | **PicoCfg.DI** | DI integration — `RegisterCfgRoot()`, `RegisterCfgTransient<T>()`, `ICfgOptions<T>` + embedded typed-binding generator |
 | **PicoCfg.Json** | JSON configuration source |
 | **PicoCfg.Yaml** | YAML configuration source |
