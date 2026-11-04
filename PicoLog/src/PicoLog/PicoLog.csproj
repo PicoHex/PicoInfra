@@ -49,10 +49,22 @@
     branches validate: the ProjectReference branch has no PackageReference at all, the other has
     the single allowed one, and an empty list is a pass.
 
-    Timing: Build and Pack — the package is what consumers inherit. Restore never runs it, so a
-    first-time restore is unaffected.
+    Timing: Build and GenerateNuspec. Restore never runs it, so a first-time restore is unaffected.
+
+    GenerateNuspec, not Pack: MSBuild runs a target's DependsOnTargets before any target hooked
+    via BeforeTargets, and Pack depends on GenerateNuspec (which itself depends on Build unless
+    NoBuild is set). Hooking Pack therefore fired the guard AFTER the package had been written.
+    Measured on this worktree with the offending reference present: a no-build pack
+    (`dotnet pack -p:NoBuild=true`) printed "Successfully created package
+    ...PicoLog.0.0.0-dev.nupkg" ABOVE the guard error, and that .nupkg really listed
+    `<dependency id="PicoJetson" version="2026.13.0" exclude="Build,Analyzers" />`; the exit
+    code was 1, so CI still failed and no push step ran, but a pipeline that collects
+    bin/**/*.nupkg regardless of exit status would have carried the package. GenerateNuspec is
+    the last target that runs before the file is written, so failing there leaves no .nupkg on
+    disk. Build is kept so a plain `build` fails too, and because a plain `pack` builds first: the
+    guard then fires at Build, before nuspec generation is even reached.
   -->
-  <Target Name="PicoLogCoreDeclaresNoSerializer" BeforeTargets="Build;Pack">
+  <Target Name="PicoLogCoreDeclaresNoSerializer" BeforeTargets="Build;GenerateNuspec">
     <ItemGroup>
       <_PicoLogCoreOwnPackageReference
         Include="@(PackageReference)"
