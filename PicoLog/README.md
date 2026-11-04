@@ -5,8 +5,6 @@ High-performance structured logging for .NET Native AOT.
 [![NuGet](https://img.shields.io/nuget/v/PicoLog)](https://nuget.org/packages/PicoLog)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/PicoHex/PicoInfra/blob/main/LICENSE)
 
-[English](README.md) | [简体中文](README.zh.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Português](README.pt.md) | [繁體中文](README.zh-tw.md) | [한국어](README.ko.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | [Русский](README.ru.md)
-
 ---
 
 ## Performance
@@ -454,9 +452,10 @@ record from outside this assembly, so `PicoLogMetrics.RecordRejectedAfterShutdow
 **public**: call it once per write you refuse because your sink is already closed (`SeqSink` and
 `FileSink` both do). Every other recorder on `PicoLogMetrics` is `internal`, and recording is a
 stateless `Add(1)` on the shared instrument, so the method carries no behaviour of its own. The
-repository has **no public-API baseline** — no `PublicAPI*.txt` anywhere and no ApiCompat in
-`Directory.Build.props` — so a widening like this is recorded here and in the commit that makes
-it, not by a build that fails on the diff.
+widening is pinned by a committed baseline — `api/PicoLog.public.txt`, one of the `api/` files
+`scripts/api-surface/` generates and only the release tool refreshes, never hand-edited — so the
+next release reports it as an API diff. The rule that matters more, that core carries no
+serializer, is still enforced by `AssemblySurfaceTests.PicoLog_ReferencesNoSerializer`.
 
 ## Packages
 
