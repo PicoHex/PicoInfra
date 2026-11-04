@@ -1,0 +1,14 @@
+I:PicoMediator.Mediator : PicoMediator.Abs.IMediator
+I:PicoMediator.Mediator : PicoMediator.Abs.IPublisher
+I:PicoMediator.Mediator : PicoMediator.Abs.IRequester
+M:PicoMediator.GeneratedDispatch.RegisterSwitch(System.Func`5<System.Type, PicoDI.Abs.ISvcScope, object, System.Threading.CancellationToken, object> dispatch) : void static
+M:PicoMediator.Mediator..ctor(PicoDI.Abs.ISvcScope scope) : void
+M:PicoMediator.Mediator.PublishParallel``1(TEvent event, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoMediator.Mediator.Publish``1(TEvent event, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoMediator.Mediator.Send``2(TCommand command, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<TResponse> override
+M:PicoMediator.MediatorAutoSubscriptionRegistry.Register(string configuratorId, System.Action`1<PicoDI.Abs.ISvcContainer> configurator) : void static
+M:PicoMediator.MediatorAutoSubscriptionRegistry.TryApplyConfiguration(PicoDI.Abs.ISvcContainer container) : bool static
+P:PicoMediator.Mediator.OnNoSubscribers : System.Action`1<string> { get; set; }
+T:class PicoMediator.GeneratedDispatch
+T:class PicoMediator.Mediator
+T:class PicoMediator.MediatorAutoSubscriptionRegistry

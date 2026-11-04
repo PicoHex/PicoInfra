@@ -1,0 +1,18 @@
+I:PicoAop.Abs.IInvocation`1 : PicoAop.Abs.IInvocation
+I:PicoAop.Abs.InterceptorBase : PicoAop.Abs.IInterceptor
+M:PicoAop.Abs.IInterceptor.InvokeAsyncVoid``1(TInvocation inv, System.Func`2<TInvocation, System.Threading.Tasks.ValueTask> next) : System.Threading.Tasks.ValueTask abstract
+M:PicoAop.Abs.IInterceptor.InvokeAsync``2(TInvocation inv, System.Func`2<TInvocation, System.Threading.Tasks.ValueTask`1<TResult>> next) : System.Threading.Tasks.ValueTask`1<TResult> abstract
+M:PicoAop.Abs.IInterceptor.InvokeVoid``1(TInvocation inv, System.Func`2<TInvocation, object> next) : void abstract
+M:PicoAop.Abs.IInterceptor.Invoke``2(TInvocation inv, System.Func`2<TInvocation, TResult> next) : TResult abstract
+M:PicoAop.Abs.InterceptorBase..ctor() : void
+M:PicoAop.Abs.InterceptorBase.InvokeAsyncVoid``1(TInvocation inv, System.Func`2<TInvocation, System.Threading.Tasks.ValueTask> next) : System.Threading.Tasks.ValueTask virtual
+M:PicoAop.Abs.InterceptorBase.InvokeAsync``2(TInvocation inv, System.Func`2<TInvocation, System.Threading.Tasks.ValueTask`1<TResult>> next) : System.Threading.Tasks.ValueTask`1<TResult> virtual
+M:PicoAop.Abs.InterceptorBase.InvokeVoid``1(TInvocation inv, System.Func`2<TInvocation, object> next) : void virtual
+M:PicoAop.Abs.InterceptorBase.Invoke``2(TInvocation inv, System.Func`2<TInvocation, TResult> next) : TResult virtual
+P:PicoAop.Abs.IInvocation.MethodName : string { get; }
+P:PicoAop.Abs.IInvocation.ServiceType : System.Type { get; }
+P:PicoAop.Abs.IInvocation`1.Result : TResult { get; set; }
+T:class PicoAop.Abs.InterceptorBase
+T:interface PicoAop.Abs.IInterceptor
+T:interface PicoAop.Abs.IInvocation
+T:interface PicoAop.Abs.IInvocation`1

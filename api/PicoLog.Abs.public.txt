@@ -1,0 +1,152 @@
+B:PicoLog.Abs.PicoLogMessageAttribute : System.Attribute
+F:PicoLog.Abs.LogLevel.Alert : PicoLog.Abs.LogLevel = 1 const
+F:PicoLog.Abs.LogLevel.Critical : PicoLog.Abs.LogLevel = 2 const
+F:PicoLog.Abs.LogLevel.Debug : PicoLog.Abs.LogLevel = 7 const
+F:PicoLog.Abs.LogLevel.Emergency : PicoLog.Abs.LogLevel = 0 const
+F:PicoLog.Abs.LogLevel.Error : PicoLog.Abs.LogLevel = 3 const
+F:PicoLog.Abs.LogLevel.Info : PicoLog.Abs.LogLevel = 6 const
+F:PicoLog.Abs.LogLevel.None : PicoLog.Abs.LogLevel = 255 const
+F:PicoLog.Abs.LogLevel.Notice : PicoLog.Abs.LogLevel = 5 const
+F:PicoLog.Abs.LogLevel.Trace : PicoLog.Abs.LogLevel = 8 const
+F:PicoLog.Abs.LogLevel.Warning : PicoLog.Abs.LogLevel = 4 const
+F:PicoLog.Abs.LogLevel.value__ : byte
+I:PicoLog.Abs.EventId : System.IEquatable`1<PicoLog.Abs.EventId>
+I:PicoLog.Abs.IBatchingLogSink : PicoLog.Abs.ILogSink
+I:PicoLog.Abs.IBatchingLogSink : System.IAsyncDisposable
+I:PicoLog.Abs.IFastLogSink : PicoLog.Abs.ILogSink
+I:PicoLog.Abs.IFastLogSink : System.IAsyncDisposable
+I:PicoLog.Abs.IFlushableLogSink : PicoLog.Abs.ILogSink
+I:PicoLog.Abs.IFlushableLogSink : System.IAsyncDisposable
+I:PicoLog.Abs.IFlushableLoggerFactory : PicoLog.Abs.ILoggerFactory
+I:PicoLog.Abs.IFlushableLoggerFactory : System.IAsyncDisposable
+I:PicoLog.Abs.ILogScope : System.IDisposable
+I:PicoLog.Abs.ILogSink : System.IAsyncDisposable
+I:PicoLog.Abs.ILoggerFactory : System.IAsyncDisposable
+I:PicoLog.Abs.ILogger`1 : PicoLog.Abs.ILogger
+M:PicoLog.Abs.EventId..ctor(int Id, string Name = null) : void
+M:PicoLog.Abs.FlushExtensions.FlushAsync(PicoLog.Abs.ILogSink sink, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask static
+M:PicoLog.Abs.FlushExtensions.FlushAsync(PicoLog.Abs.ILoggerFactory factory, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask static
+M:PicoLog.Abs.IBatchingLogSink.WriteBatchAsync(System.Collections.Generic.IReadOnlyList`1<PicoLog.Abs.LogEntry> batch, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoLog.Abs.IFlushableLogSink.FlushAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoLog.Abs.IFlushableLoggerFactory.FlushAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoLog.Abs.ILogFormatter.Format(PicoLog.Abs.LogEntry entry) : string abstract
+M:PicoLog.Abs.ILogSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task abstract
+M:PicoLog.Abs.ILogger.BeginScope``1(TState state) : System.IDisposable abstract
+M:PicoLog.Abs.ILogger.Log(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void abstract
+M:PicoLog.Abs.ILogger.Log(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void abstract
+M:PicoLog.Abs.ILogger.Log(PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void abstract
+M:PicoLog.Abs.ILogger.Log(PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void abstract
+M:PicoLog.Abs.ILogger.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoLog.Abs.ILogger.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoLog.Abs.ILogger.LogAsync(PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoLog.Abs.ILogger.LogAsync(PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoLog.Abs.ILoggerFactory.CreateLogger(string categoryName) : PicoLog.Abs.ILogger abstract
+M:PicoLog.Abs.LogEntry..ctor() : void
+M:PicoLog.Abs.LogEntry.Reset() : void
+M:PicoLog.Abs.LoggerExtensions.Alert(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Alert(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Alert(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.AlertAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.AlertAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.AlertAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Critical(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Critical(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Critical(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.CriticalAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.CriticalAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.CriticalAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Debug(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Debug(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Debug(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.DebugAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.DebugAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.DebugAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Emergency(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Emergency(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Emergency(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.EmergencyAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.EmergencyAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.EmergencyAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Error(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Error(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Error(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.ErrorAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.ErrorAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.ErrorAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Info(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Info(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Info(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.InfoAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.InfoAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.InfoAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Log(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.LogStructured(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties = null, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.LogStructuredAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties = null, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Notice(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Notice(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Notice(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.NoticeAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.NoticeAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.NoticeAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Trace(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Trace(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Trace(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.TraceAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.TraceAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.TraceAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.Warning(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Warning(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.Warning(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null) : void static
+M:PicoLog.Abs.LoggerExtensions.WarningAsync(PicoLog.Abs.ILogger logger, PicoLog.Abs.EventId eventId, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.WarningAsync(PicoLog.Abs.ILogger logger, System.FormattableString message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.LoggerExtensions.WarningAsync(PicoLog.Abs.ILogger logger, string message, System.Exception exception = null, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task static
+M:PicoLog.Abs.PicoLogMessageAttribute..ctor(PicoLog.Abs.LogLevel level) : void
+P:PicoLog.Abs.EventId.Id : int { get; init; }
+P:PicoLog.Abs.EventId.Name : string { get; init; }
+P:PicoLog.Abs.ILogScope.State : object { get; }
+P:PicoLog.Abs.LogEntry.Category : string { get; set; }
+P:PicoLog.Abs.LogEntry.EventId : PicoLog.Abs.EventId { get; set; }
+P:PicoLog.Abs.LogEntry.Exception : System.Exception { get; set; }
+P:PicoLog.Abs.LogEntry.Level : PicoLog.Abs.LogLevel { get; set; }
+P:PicoLog.Abs.LogEntry.Message : string { get; set; }
+P:PicoLog.Abs.LogEntry.MessageArgs : System.Collections.Generic.IReadOnlyList`1<object> { get; set; }
+P:PicoLog.Abs.LogEntry.MessageTemplate : string { get; set; }
+P:PicoLog.Abs.LogEntry.Properties : System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> { get; set; }
+P:PicoLog.Abs.LogEntry.ScopeProperties : System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> { get; set; }
+P:PicoLog.Abs.LogEntry.Scopes : System.Collections.Generic.IReadOnlyList`1<object> { get; set; }
+P:PicoLog.Abs.LogEntry.Timestamp : System.DateTimeOffset { get; set; }
+P:PicoLog.Abs.PicoLogMessageAttribute.EventId : int { get; set; }
+P:PicoLog.Abs.PicoLogMessageAttribute.EventName : string { get; set; }
+P:PicoLog.Abs.PicoLogMessageAttribute.Level : PicoLog.Abs.LogLevel { get; }
+P:PicoLog.Abs.PicoLogMessageAttribute.Message : string { get; set; }
+T:class PicoLog.Abs.FlushExtensions
+T:class PicoLog.Abs.LogEntry
+T:class PicoLog.Abs.LoggerExtensions
+T:class PicoLog.Abs.PicoLogMessageAttribute
+T:enum PicoLog.Abs.LogLevel
+T:interface PicoLog.Abs.IBatchingLogSink
+T:interface PicoLog.Abs.IFastLogSink
+T:interface PicoLog.Abs.IFlushableLogSink
+T:interface PicoLog.Abs.IFlushableLoggerFactory
+T:interface PicoLog.Abs.ILogFormatter
+T:interface PicoLog.Abs.ILogScope
+T:interface PicoLog.Abs.ILogSink
+T:interface PicoLog.Abs.ILogger
+T:interface PicoLog.Abs.ILoggerFactory
+T:interface PicoLog.Abs.ILogger`1
+T:struct PicoLog.Abs.EventId

@@ -1,0 +1,3 @@
+M:PicoCfg.Json.CfgBuilderJsonExtensions.AddJson(PicoCfg.CfgBuilder builder, string json, bool flattenArrays = false) : PicoCfg.CfgBuilder static
+M:PicoCfg.Json.CfgBuilderJsonExtensions.AddJsonFile(PicoCfg.CfgBuilder builder, string path, bool flattenArrays = false) : PicoCfg.CfgBuilder static
+T:class PicoCfg.Json.CfgBuilderJsonExtensions

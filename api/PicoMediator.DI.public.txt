@@ -1,0 +1,2 @@
+M:PicoMediator.DI.SvcContainerMediatorExtensions.AddPicoMediator(PicoDI.Abs.ISvcContainer container, PicoDI.Abs.SvcLifetime lifetime = 2, bool autoRegisterHandlers = true) : PicoDI.Abs.ISvcContainer static
+T:class PicoMediator.DI.SvcContainerMediatorExtensions

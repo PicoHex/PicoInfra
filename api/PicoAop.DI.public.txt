@@ -1,0 +1,6 @@
+M:PicoAop.DI.SvcContainerInterceptorExtensions.AddInterceptor``1(PicoDI.Abs.ISvcContainer container) : PicoDI.Abs.ISvcContainer static
+M:PicoAop.DI.SvcContainerInterceptorExtensions.InterceptBy(PicoDI.Abs.ISvcContainer container, System.Type interceptorType) : PicoDI.Abs.ISvcContainer static
+M:PicoAop.DI.SvcContainerInterceptorExtensions.InterceptBy``1(PicoDI.Abs.ISvcContainer container) : PicoDI.Abs.ISvcContainer static
+M:PicoAop.DI.SvcContainerInterceptorExtensions.WithoutInterceptor``1(PicoDI.Abs.ISvcContainer container) : PicoDI.Abs.ISvcContainer static
+M:PicoAop.DI.SvcContainerInterceptorExtensions.WithoutInterceptors(PicoDI.Abs.ISvcContainer container) : PicoDI.Abs.ISvcContainer static
+T:class PicoAop.DI.SvcContainerInterceptorExtensions

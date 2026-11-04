@@ -1,0 +1,8 @@
+I:PicoLog.Json.JsonLogSink : PicoLog.Abs.IFlushableLogSink
+I:PicoLog.Json.JsonLogSink : PicoLog.Abs.ILogSink
+I:PicoLog.Json.JsonLogSink : System.IAsyncDisposable
+M:PicoLog.Json.JsonLogSink..ctor(string filePath) : void
+M:PicoLog.Json.JsonLogSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.Json.JsonLogSink.FlushAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.Json.JsonLogSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.Task override
+T:class PicoLog.Json.JsonLogSink

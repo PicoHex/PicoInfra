@@ -1,0 +1,17 @@
+I:PicoMediator.Abs.ICommand`1 : PicoMediator.Abs.IMessage
+I:PicoMediator.Abs.IEvent : PicoMediator.Abs.IMessage
+I:PicoMediator.Abs.IMediator : PicoMediator.Abs.IPublisher
+I:PicoMediator.Abs.IMediator : PicoMediator.Abs.IRequester
+M:PicoMediator.Abs.ICommandHandler`2.Handle(TCommand command, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<TResponse> abstract
+M:PicoMediator.Abs.IPublisher.PublishParallel``1(TEvent event, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoMediator.Abs.IPublisher.Publish``1(TEvent event, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoMediator.Abs.IRequester.Send``2(TCommand command, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<TResponse> abstract
+M:PicoMediator.Abs.ISubscriber`1.Handle(TEvent event, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask abstract
+T:interface PicoMediator.Abs.ICommandHandler`2
+T:interface PicoMediator.Abs.ICommand`1
+T:interface PicoMediator.Abs.IEvent
+T:interface PicoMediator.Abs.IMediator
+T:interface PicoMediator.Abs.IMessage
+T:interface PicoMediator.Abs.IPublisher
+T:interface PicoMediator.Abs.IRequester
+T:interface PicoMediator.Abs.ISubscriber`1
