@@ -84,6 +84,18 @@
     <PublishAotOnRun Condition="'$(PublishAotOnRun)' == ''">false</PublishAotOnRun>
   </PropertyGroup>
 
+  <!-- ===== NuGet audit ===== -->
+
+  <!--
+    GHSA-p3jp-9v83-76w9: Microsoft.DotNet.ILCompiler < 10.0.14, bundled by SDK 10.0.401's
+    ILCompilerPackVersion=10.0.12 and pulled into every project by PublishAot=true.
+    Scoped to this id on purpose: a NEW advisory must still fail the build.
+    Remove this the moment the SDK bundles 10.0.14 (verify with a real PublishAot publish).
+  -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-p3jp-9v83-76w9" />
+  </ItemGroup>
+
   <!-- Common package metadata -->
   <PropertyGroup>
     <Authors>PicoHex</Authors>
