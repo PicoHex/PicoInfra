@@ -2,24 +2,77 @@ namespace PicoLog.Json.Tests;
 
 public sealed class SeqSinkTests
 {
+    private const string SeqEndpoint = "http://localhost:5341/api/events/raw";
+
+    /// <summary>
+    /// Records what the sink actually put on the wire. This handler used to only answer 201 and
+    /// never look at <see cref="HttpRequestMessage.RequestUri"/> — so posting the batch to a wrong
+    /// path kept every SeqSink test green (test-validity audit row 8).
+    /// </summary>
     private sealed class FakeHttpHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
         : HttpMessageHandler
     {
+        public Uri? LastRequestUri { get; private set; }
+        public HttpMethod? LastMethod { get; private set; }
+        public string? LastBody { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken ct
-        ) => Task.FromResult(handler(request));
+        )
+        {
+            LastRequestUri = request.RequestUri;
+            LastMethod = request.Method;
+            LastBody = request.Content?.ReadAsStringAsync(ct).GetAwaiter().GetResult();
+            return Task.FromResult(handler(request));
+        }
+    }
+
+    /// <summary>
+    /// The sink's contract with the server: one POST to <c>/api/events/raw</c> carrying a COMPACT
+    /// JSON batch. The old assertions were <c>Contains("\"@t\"")</c> / <c>Contains("Hello Seq")</c>,
+    /// which verified neither half: the wrong endpoint was never observed, and indentation (or a
+    /// missing comma) leaves both substrings in place. This asserts the endpoint, the compactness
+    /// and then PARSES the batch, so the values have to come back out of a valid document
+    /// (test-validity audit row 8).
+    /// </summary>
+    private static async Task AssertSeqBatchAsync(FakeHttpHandler handler, params string[] messages)
+    {
+        await Assert.That(handler.LastMethod).IsEqualTo(HttpMethod.Post);
+        await Assert.That(handler.LastRequestUri?.AbsoluteUri).IsEqualTo(SeqEndpoint);
+
+        var body = handler.LastBody;
+        await Assert.That(body).IsNotNull();
+
+        // Compact: one line, and no insignificant whitespace between tokens.
+        await Assert
+            .That(body!.Contains('\n'))
+            .IsFalse()
+            .Because("the batch is compact JSON, one line, not pretty-printed");
+        await Assert
+            .That(body)
+            .DoesNotContain(": ")
+            .Because("compact means no space after a member name");
+        await Assert
+            .That(body.StartsWith("{\"Events\":[{\"@t\":\"", StringComparison.Ordinal))
+            .IsTrue()
+            .Because("the envelope and its first member are emitted without padding");
+
+        // ...and the batch has to PARSE: a missing comma keeps every substring and loses the JSON.
+        using var doc = JsonDocument.Parse(body);
+        var events = doc.RootElement.GetProperty("Events");
+        await Assert.That(events.GetArrayLength()).IsEqualTo(messages.Length);
+        for (var i = 0; i < messages.Length; i++)
+        {
+            await Assert.That(events[i].GetProperty("@mt").GetString()).IsEqualTo(messages[i]);
+            await Assert.That(events[i].TryGetProperty("@t", out _)).IsTrue();
+        }
     }
 
     [Test]
     public async Task WriteBatchAsync_SendsCompactJson_ToCorrectEndpoint()
     {
-        string? capturedBody = null;
-        var handler = new FakeHttpHandler(req =>
-        {
-            capturedBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            return new HttpResponseMessage(HttpStatusCode.Created);
-        });
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5341") };
         var sink = new SeqSink(httpClient);
 
@@ -37,9 +90,7 @@ public sealed class SeqSinkTests
         // Force flush to send
         await sink.FlushAsync();
 
-        await Assert.That(capturedBody).IsNotNull();
-        await Assert.That(capturedBody!).Contains("\"@t\"");
-        await Assert.That(capturedBody!).Contains("Hello Seq");
+        await AssertSeqBatchAsync(handler, "Hello Seq");
     }
 
     [Test]
@@ -63,12 +114,7 @@ public sealed class SeqSinkTests
     [Test]
     public async Task FlushAsync_SendsBufferedEntries()
     {
-        string? body = null;
-        var handler = new FakeHttpHandler(req =>
-        {
-            body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            return new HttpResponseMessage(HttpStatusCode.Created);
-        });
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5341") };
         var sink = new SeqSink(httpClient);
 
@@ -76,9 +122,7 @@ public sealed class SeqSinkTests
         await sink.WriteAsync(new LogEntry { Message = "two" });
         await sink.FlushAsync();
 
-        await Assert.That(body).IsNotNull();
-        await Assert.That(body!).Contains("one");
-        await Assert.That(body!).Contains("two");
+        await AssertSeqBatchAsync(handler, "one", "two");
     }
 
     [Test]
@@ -100,11 +144,9 @@ public sealed class SeqSinkTests
     [Test]
     public async Task PeriodicFlush_SendsEntriesBelowBatchThreshold()
     {
-        string? body = null;
         var signal = new TaskCompletionSource();
-        var handler = new FakeHttpHandler(req =>
+        var handler = new FakeHttpHandler(_ =>
         {
-            body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
             signal.TrySetResult();
             return new HttpResponseMessage(HttpStatusCode.Created);
         });
@@ -117,8 +159,7 @@ public sealed class SeqSinkTests
         // Wait for the periodic timer to trigger (up to 5 seconds)
         var completed = await Task.WhenAny(signal.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         await Assert.That(completed).IsEqualTo(signal.Task);
-        await Assert.That(body).IsNotNull();
-        await Assert.That(body!).Contains("periodic-flush");
+        await AssertSeqBatchAsync(handler, "periodic-flush");
 
         await sink.DisposeAsync();
     }
@@ -126,20 +167,14 @@ public sealed class SeqSinkTests
     [Test]
     public async Task DisposeAsync_FlushesRemainingEntries()
     {
-        string? body = null;
-        var handler = new FakeHttpHandler(req =>
-        {
-            body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            return new HttpResponseMessage(HttpStatusCode.Created);
-        });
+        var handler = new FakeHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Created));
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost:5341") };
         var sink = new SeqSink(httpClient);
 
         await sink.WriteAsync(new LogEntry { Message = "dispose-test" });
         await sink.DisposeAsync();
 
-        await Assert.That(body).IsNotNull();
-        await Assert.That(body!).Contains("dispose-test");
+        await AssertSeqBatchAsync(handler, "dispose-test");
     }
 
     private sealed class GatedHttpHandler : HttpMessageHandler

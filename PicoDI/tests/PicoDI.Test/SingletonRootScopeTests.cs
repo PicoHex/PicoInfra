@@ -113,8 +113,17 @@ public class SingletonRootScopeTests
         _ = root.GetService<object>();
 
         await Assert.That(seen).IsNotNull();
-        // The factory must receive the container-internal root scope,
-        // NOT the scope that triggered resolution.
         await Assert.That(ReferenceEquals(seen, root)).IsFalse();
+
+        // "Not the triggering scope" is not the contract: it accepts ANY other scope, including
+        // a fresh throwaway one handed to every resolution — the shape that leaks every scoped
+        // dependency a singleton factory captures until process exit (the E1 defect). Measured on
+        // this branch: that injection leaves this test green and 348/350 of PicoDI.Test green.
+        // The factory must receive the container-internal root scope — the one the container
+        // keeps and releases last — so pin the identity, not the inequality.
+        await Assert
+            .That(ReferenceEquals(seen, container.GetImplicitRootScope()))
+            .IsTrue()
+            .Because("the singleton factory runs against the container-internal root scope");
     }
 }
