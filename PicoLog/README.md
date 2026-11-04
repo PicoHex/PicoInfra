@@ -369,7 +369,7 @@ Disposal is asynchronous, and that is the whole contract: `LoggerFactory` derive
 `IDisposable`. A caller who writes `using var factory = new LoggerFactory(sinks);` gets a compile
 error — `CS8418: 'LoggerFactory': type used in a using statement must implement
 'System.IDisposable'. Did you mean 'await using' rather than 'using'?` — so every factory in this
-README is released with `await using`.
+README is released with `await using`. <!-- doc-lint: counter-example -->
 
 Set `ShutdownTimeout` to bound the drain:
 
