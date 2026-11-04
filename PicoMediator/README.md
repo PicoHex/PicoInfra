@@ -170,6 +170,8 @@ container.AddPicoMediator();
 
 Scoped is the default for request-scoped isolation. Use `AddPicoMediator(SvcLifetime.Singleton)` for a stateless mediator.
 
+**A `Singleton` mediator captures the container-internal root scope.** A mediator resolves handlers through the scope it was constructed with, and PicoDI builds singleton factories against the container root scope (its documented singleton rule). So with `Singleton`, handlers and their scoped dependencies live for the container's lifetime: a `Scoped` handler effectively becomes **one instance per container** rather than one per caller scope, and disposable transient handlers are retained until container disposal. That follows from PicoDI's singleton rule, not from a mediator bug — `Send`/`Publish` take no scope, so a singleton has no channel to a caller's scope. Direct resolution in the same container is unaffected: `scope.GetService<ISubscriber<T>>()` still returns the scope's own instance, so the mediator path and the DI path can hand out different instances of the same `Scoped` registration. Keep the default `Scoped` unless the whole handler graph is safe to live that long; the behaviour is pinned by `MediatorScopeCaptureTests`.
+
 ### Narrow Ports
 
 Depend on the narrowest interface for your component:
