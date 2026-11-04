@@ -3,6 +3,9 @@ namespace PicoDI.Abs;
 /// <summary>
 /// Represents a host that manages the lifecycle of hosted services within a dependency injection container.
 /// </summary>
+/// <remarks>
+/// Asynchronous disposal is the only disposal: release the host with <c>await using</c> or <c>await DisposeAsync()</c>, because this contract implements <see cref="IAsyncDisposable"/> and there is no <see cref="IDisposable"/>. Shutdown stops hosted services through <see cref="IHostedSvc.StopAsync"/>, so a synchronous form could only block on it or drop it.
+/// </remarks>
 public interface IHost : IAsyncDisposable
 {
     /// <summary>

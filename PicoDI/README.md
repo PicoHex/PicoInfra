@@ -94,7 +94,7 @@ container.RegisterHostedSvc<HealthCheckService>(scope => new HealthCheckService(
 ## Resolution
 
 ```csharp
-using var scope = container.CreateScope();
+await using var scope = container.CreateScope();
 
 // Typed resolution — dictionary lookup with cached registrations
 // (generated factories inline constructor chains for dependencies)
@@ -137,6 +137,24 @@ Multiple registrations for the same service type are supported. Resolution retur
 4. the container-internal root scope last — it owns the scoped/transient instances that singleton factories captured, so it outlives the singletons that captured them.
 
 Step 2 used to run *after* step 3: singletons were disposed before the user root scopes, so a scoped `Dispose` ran against already-disposed singletons. Each group keeps its own inner ordering.
+
+## Disposal: async only
+
+Disposal is asynchronous, and that is the whole contract: `ISvcContainer`, `ISvcScope` and `IHost`
+implement `IAsyncDisposable`, nothing in `PicoDI` implements `IDisposable`, and no synchronous
+`Dispose` will be added. Dispose with `await using` or an explicit `await container.DisposeAsync()`.
+A caller who writes `using var scope = container.CreateScope();` gets a compile error — `CS8418:
+'ISvcScope': type used in a using statement must implement 'System.IDisposable'. Did you mean
+'await using' rather than 'using'?` — and that error *is* the contract working, not a missing
+feature. Shutdown here is genuinely asynchronous: the container stops hosted services through
+`StopAsync` and releases scoped and singleton dependencies that are themselves `IAsyncDisposable`,
+so a synchronous facade could only block on that work (deadlock-prone under a synchronisation
+context) or skip it and leak silently.
+
+```csharp
+await using var scope = container.CreateScope();
+await container.DisposeAsync();
+```
 
 ## Source Generator (PicoDI.Gen)
 

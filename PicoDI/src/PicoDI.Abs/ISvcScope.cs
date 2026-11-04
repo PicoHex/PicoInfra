@@ -3,6 +3,9 @@
 /// <summary>
 /// Represents a service scope that manages the lifetime of scoped services and provides service resolution.
 /// </summary>
+/// <remarks>
+/// Asynchronous disposal is the only disposal: release the scope with <c>await using</c> or <c>await DisposeAsync()</c>, because this contract implements <see cref="IAsyncDisposable"/> and there is no <see cref="IDisposable"/>.
+/// </remarks>
 public interface ISvcScope : IAsyncDisposable
 {
     /// <summary>
