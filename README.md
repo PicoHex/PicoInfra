@@ -24,7 +24,7 @@ PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries th
 | **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` |
 | **PicoSchedule** | Embedded AOT Scheduling (cron) | `PicoSchedule` |
 
-> Source generators (`PicoDI.Gen`, `PicoAop.Gen`, `PicoCfg.Gen`, `PicoLog.Gen`, `PicoMediator.Gen`) are **embedded inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated). The standalone `*.Gen` packages are **no longer published** — NuGet only carries legacy versions (≤ 2026.6.0); installing one is unnecessary and may add a stale duplicate analyzer.
+> Source generators (`PicoDI.Gen`, `PicoAop.Gen`, `PicoCfg.Gen`, `PicoLog.Gen`, `PicoMediator.Gen`) are **embedded inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated). The standalone `*.Gen` packages are **no longer published**: only the pre-merger tags `v2026.1.1`, `v2026.6.0`, `v2026.6.1` and `v2026.7.0` ever shipped them (tag numbers there do not track history — `v2026.7.0` is an ancestor of `v2026.6.1`), and every release since `v2026.6.2` embeds the generator in `.Abs`, so installing a standalone `*.Gen` only adds a stale duplicate analyzer.
 
 Each module is **independent** — use one, some, or all. DI integration packages (`PicoCfg.DI`, `PicoLog.DI`, `PicoMediator.DI`, `PicoAop.DI`) bridge modules into the container.
 
@@ -430,7 +430,7 @@ var mediator = scope.GetService<IMediator>();
 
 ## Package Reference
 
-> Source generators ship **inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated) — no extra reference is needed. The standalone `*.Gen` packages are **no longer published** (legacy versions up to 2026.6.0 remain on NuGet — do not install them).
+> Source generators ship **inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated) — no extra reference is needed. The standalone `*.Gen` packages are **no longer published** — only the pre-merger tags `v2026.1.1`, `v2026.6.0`, `v2026.6.1` and `v2026.7.0` ever shipped them, and every release since `v2026.6.2` embeds the generator in `.Abs` — do not install one.
 
 ### DI
 | Package | Description |
