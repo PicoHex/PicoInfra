@@ -54,6 +54,12 @@ public sealed class DocSnippetAsyncDisposalTests
     private const string SolutionFileName = "PicoInfra.slnx";
 
     /// <summary>
+    /// Second root marker, paired with <see cref="SolutionFileName"/>: a solution file alone could
+    /// be a copy, so the walk also requires the project directory this guard reads.
+    /// </summary>
+    private const string RootProjectDirectoryName = "PicoLog";
+
+    /// <summary>
     /// Types a documentation snippet may name, mapped to the real type so the verdict is
     /// reflection, not a hardcoded list. Every entry is here because it is disposable — either
     /// async-dispose-only (flagged) or <see cref="IDisposable"/> (legal with <c>using var</c>).
@@ -636,21 +642,105 @@ public sealed class DocSnippetAsyncDisposalTests
 
     // ---------------------------------------------------------------- repository access
 
+    /// <summary>
+    /// The repository root, located from two independent anchors. The compiled-in source path is
+    /// tried first — it is the most precise — but the test binary's own output directory is tried
+    /// as well, because the SDK PathMap rewrites <see cref="CallerFilePathAttribute"/> paths to
+    /// <c>/_/…</c> under <c>ContinuousIntegrationBuild</c> (set by <c>Directory.Build.props</c>
+    /// when <c>CI=true</c>), and then the first anchor points into a directory tree that does not
+    /// exist.
+    /// </summary>
+    /// <remarks>
+    /// A failed walk throws, naming both anchors and what each one saw. It must never return
+    /// something plausible-looking or let the caller skip: a guard that quietly checks nothing is
+    /// the exact failure this file exists to prevent.
+    /// </remarks>
     private static string RepositoryRoot([CallerFilePath] string thisFile = "")
     {
-        var directory = Path.GetDirectoryName(thisFile);
-        while (directory is not null)
+        var attempts = new List<string>();
+
+        if (
+            TryFindRootAbove(
+                Path.GetDirectoryName(thisFile),
+                $"the compiled-in source path ('{thisFile}')",
+                attempts,
+                out var root
+            )
+        )
+            return root;
+
+        if (
+            TryFindRootAbove(
+                AppContext.BaseDirectory,
+                $"the test output directory ('{AppContext.BaseDirectory}')",
+                attempts,
+                out root
+            )
+        )
+            return root;
+
+        throw new InvalidOperationException(
+            "The documentation guard cannot locate the repository root, so it cannot check"
+                + $" anything. A repository root is a directory containing both {SolutionFileName}"
+                + $" and {RootProjectDirectoryName}/. Tried:"
+                + Environment.NewLine
+                + string.Join(Environment.NewLine, attempts.Select(attempt => "  - " + attempt))
+                + Environment.NewLine
+                + "If the first anchor reads '/_/…', the SDK PathMap rewrote the source path"
+                + " (ContinuousIntegrationBuild, i.e. CI=true); the output directory survives that"
+                + " rewrite, so it failing too means this binary is running with no repository"
+                + " above it."
+        );
+    }
+
+    /// <summary>
+    /// Walks up from <paramref name="start"/> to the first directory that is verifiably the
+    /// repository root. The outcome is recorded in <paramref name="attempts"/> so a total failure
+    /// can say what was tried and why it did not work.
+    /// </summary>
+    private static bool TryFindRootAbove(
+        string? start,
+        string anchor,
+        List<string> attempts,
+        out string root
+    )
+    {
+        root = string.Empty;
+        if (string.IsNullOrEmpty(start))
         {
-            if (File.Exists(Path.Combine(directory, SolutionFileName)))
-                return directory;
+            attempts.Add($"{anchor}: no directory to start from.");
+            return false;
+        }
+
+        var directory = start;
+        var examined = 0;
+        while (!string.IsNullOrEmpty(directory))
+        {
+            examined++;
+            if (IsRepositoryRoot(directory))
+            {
+                root = directory;
+                return true;
+            }
+
             directory = Path.GetDirectoryName(directory);
         }
 
-        throw new InvalidOperationException(
-            $"{SolutionFileName} not found above '{thisFile}': the documentation guard cannot"
-                + " locate the repository root, so it cannot check anything."
+        attempts.Add(
+            $"{anchor}: walked up {examined} directories from '{start}' without finding one that"
+                + $" contains both {SolutionFileName} and {RootProjectDirectoryName}/."
         );
+        return false;
     }
+
+    /// <summary>
+    /// Whether <paramref name="directory"/> is the repository root. Both halves are required: a
+    /// lone solution file proves nothing (a copy, a fixture, a stale artifact), while a root with
+    /// the solution <em>and</em> the project this guard documents is not a coincidence.
+    /// </summary>
+    private static bool IsRepositoryRoot(string directory) =>
+        File.Exists(Path.Combine(directory, SolutionFileName))
+        && Directory.Exists(Path.Combine(directory, RootProjectDirectoryName));
 
     /// <summary>
     /// Every Markdown file git tracks, relative to the root with forward slashes. Tracked files are
