@@ -25,7 +25,11 @@ public static class SvcContainerMediatorExtensions
         /// scope, and disposable transient handlers are retained until container
         /// disposal. That follows from PicoDI's singleton rule, not from a mediator
         /// bug (<c>Send</c>/<c>Publish</c> take no scope, so a singleton has no
-        /// channel to a caller's scope). Keep <see cref="SvcLifetime.Scoped"/> unless
+        /// channel to a caller's scope). Direct resolution in the same container is
+        /// unaffected: <c>scope.GetService&lt;ISubscriber&lt;T&gt;&gt;()</c> still returns
+        /// the scope's own instance, so the mediator path and the DI path can hand out
+        /// different instances of the same <see cref="SvcLifetime.Scoped"/> registration.
+        /// Keep <see cref="SvcLifetime.Scoped"/> unless
         /// the whole handler graph is safe to live that long.
         /// </param>
         /// <param name="autoRegisterHandlers">
