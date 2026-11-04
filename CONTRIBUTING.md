@@ -129,6 +129,10 @@ dotnet csharpier format .             # fix them
 
 The pre-commit hook (`scripts/install-hooks.sh`) formats staged `.cs` files automatically; CI enforces `dotnet csharpier check .` in the `Format` job.
 
+### Documentation snippets
+
+Markdown snippets must compile. `PicoLog.Tests` scans every tracked `*.md` for the one defect it can judge without a compilation context: `using var` on a type that is async-dispose-only (CS8418 — use `await using`). A block that *deliberately* shows the wrong form, a counter-example the prose argues against, is exempted by a `<!-- doc-lint: counter-example -->` marker on the fence line (or the line above it), or anywhere in the paragraph for inline prose.
+
 ## AOT Testing Guide
 
 PicoInfra is AOT-first. Before submitting, verify your changes compile with Native AOT:

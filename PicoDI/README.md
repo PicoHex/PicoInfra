@@ -149,7 +149,7 @@ A caller who writes `using var scope = container.CreateScope();` gets a compile 
 feature. Shutdown here is genuinely asynchronous: the container stops hosted services through
 `StopAsync` and releases scoped and singleton dependencies that are themselves `IAsyncDisposable`,
 so a synchronous facade could only block on that work (deadlock-prone under a synchronisation
-context) or skip it and leak silently.
+context) or skip it and leak silently. <!-- doc-lint: counter-example -->
 
 ```csharp
 await using var scope = container.CreateScope();
