@@ -25,4 +25,47 @@
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
+
+  <!--
+    The other half of the "PicoLog carries no serializer" pin. AssemblySurfaceTests.
+    PicoLog_ReferencesNoSerializer checks the ASSEMBLY's references, so it sees a serializer that
+    is USED — including one that ships inside the shared framework (System.Text.Json lives in
+    Microsoft.NETCore.App, so `using System.Text.Json` needs no PackageReference at all). What it
+    cannot see is an UNUSED <PackageReference>: Roslyn emits an AssemblyRef only for assemblies
+    whose types are used, so a bare `<PackageReference Include="PicoJetson" />` leaves PicoLog.dll's
+    metadata unchanged and that pin green (measured: its 194 tests still pass against exactly that
+    build) — while every consumer of PicoLog still inherits the package. The project file is the
+    only place that half is visible.
+
+    The allow-list is exactly PicoLog.Abs: core's entire dependency list is PicoLog.Abs plus
+    in-framework assemblies. Serialization is PicoLog.Json's job — the sinks that serialize
+    (JsonLogSink, SeqSink) ship there, with PicoJetson.
+
+    Only PackageReferences DECLARED IN THIS FILE count (%(DefiningProjectFullPath)), so the
+    inherited Microsoft.SourceLink.GitHub (Directory.Build.props), the SDK's own
+    Microsoft.DotNet.ILCompiler / Microsoft.NET.ILLink.Tasks injection
+    (Microsoft.NET.Sdk.FrameworkReferenceResolution.targets) and the ProjectReference used when
+    UseProjectReferences=true neither satisfy nor trip the guard. Both UseProjectReferences
+    branches validate: the ProjectReference branch has no PackageReference at all, the other has
+    the single allowed one, and an empty list is a pass.
+
+    Timing: Build and Pack — the package is what consumers inherit. Restore never runs it, so a
+    first-time restore is unaffected.
+  -->
+  <Target Name="PicoLogCoreDeclaresNoSerializer" BeforeTargets="Build;Pack">
+    <ItemGroup>
+      <_PicoLogCoreOwnPackageReference
+        Include="@(PackageReference)"
+        Condition="'%(PackageReference.DefiningProjectFullPath)' == '$(MSBuildProjectFullPath)'"
+      />
+      <_PicoLogCoreForeignPackageReference
+        Include="@(_PicoLogCoreOwnPackageReference)"
+        Exclude="PicoLog.Abs"
+      />
+    </ItemGroup>
+    <Error
+      Condition="'@(_PicoLogCoreForeignPackageReference)' != ''"
+      Text="PicoLog (core) may declare exactly one package dependency: PicoLog.Abs. Offending PackageReference(s): @(_PicoLogCoreForeignPackageReference, ', ').&#10;&#10;Serialization is PicoLog.Json's job: the sinks that serialize (JsonLogSink, SeqSink) ship in that package, together with PicoJetson. Core's entire dependency list is PicoLog.Abs plus in-framework assemblies — a package declared here is inherited by every consumer of PicoLog. If a sink needs it, that sink belongs in PicoLog.Json.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+    />
+  </Target>
 </Project>
