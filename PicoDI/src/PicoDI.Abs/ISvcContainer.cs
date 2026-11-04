@@ -3,6 +3,9 @@ namespace PicoDI.Abs;
 /// <summary>
 /// Represents a dependency injection container that manages service registrations and scope creation.
 /// </summary>
+/// <remarks>
+/// Asynchronous disposal is the only disposal: release the container with <c>await using</c> or <c>await DisposeAsync()</c>, because this contract implements <see cref="IAsyncDisposable"/> and there is no <see cref="IDisposable"/>.
+/// </remarks>
 public interface ISvcContainer : IAsyncDisposable
 {
     /// <summary>
