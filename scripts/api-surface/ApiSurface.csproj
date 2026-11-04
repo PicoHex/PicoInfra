@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>picohex-api-surface</AssemblyName>
+    <RootNamespace>PicoHex.ApiSurface</RootNamespace>
+    <!-- Dev tool for PicoHex release versioning. Zero PackageReferences:
+         System.Reflection.Metadata + System.Collections.Immutable ship in the
+         shared framework (verified present in the net10.0 ref pack). -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

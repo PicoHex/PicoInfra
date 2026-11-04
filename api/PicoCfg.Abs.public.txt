@@ -1,0 +1,32 @@
+I:PicoCfg.Abs.CfgSection : PicoCfg.Abs.ICfg
+I:PicoCfg.Abs.CfgSection : PicoCfg.Abs.ICfgSection
+I:PicoCfg.Abs.ICfgProvider : System.IAsyncDisposable
+I:PicoCfg.Abs.ICfgRoot : PicoCfg.Abs.ICfg
+I:PicoCfg.Abs.ICfgRoot : System.IAsyncDisposable
+I:PicoCfg.Abs.ICfgSection : PicoCfg.Abs.ICfg
+I:PicoCfg.Abs.ICfgSnapshot : PicoCfg.Abs.ICfg
+M:PicoCfg.Abs.CfgSection..ctor(PicoCfg.Abs.ICfg parent, string path) : void
+M:PicoCfg.Abs.CfgSection.TryGetValue(string key, out string value) : bool override
+M:PicoCfg.Abs.CfgSectionExtensions.GetSection(PicoCfg.Abs.ICfg cfg, string path) : PicoCfg.Abs.ICfg static
+M:PicoCfg.Abs.CfgSnapshotExtensions.GetValue(PicoCfg.Abs.ICfg cfg, string path) : string static
+M:PicoCfg.Abs.ICfg.TryGetValue(string path, out string value) : bool abstract
+M:PicoCfg.Abs.ICfgProvider.ReloadAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<bool> abstract
+M:PicoCfg.Abs.ICfgRoot.ReloadAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<bool> abstract
+M:PicoCfg.Abs.ICfgRoot.WaitForChangeAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask abstract
+M:PicoCfg.Abs.ICfgSnapshot.GetAllValues() : System.Collections.Generic.IReadOnlyDictionary`2<string, string> abstract
+M:PicoCfg.Abs.ICfgSource.OpenAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<PicoCfg.Abs.ICfgProvider> abstract
+P:PicoCfg.Abs.CfgSection.Parent : PicoCfg.Abs.ICfg { get; }
+P:PicoCfg.Abs.CfgSection.Path : string { get; }
+P:PicoCfg.Abs.ICfgOptions`1.Value : T { get; }
+P:PicoCfg.Abs.ICfgProvider.Snapshot : PicoCfg.Abs.ICfgSnapshot { get; }
+P:PicoCfg.Abs.ICfgSection.Path : string { get; }
+T:class PicoCfg.Abs.CfgSection
+T:class PicoCfg.Abs.CfgSectionExtensions
+T:class PicoCfg.Abs.CfgSnapshotExtensions
+T:interface PicoCfg.Abs.ICfg
+T:interface PicoCfg.Abs.ICfgOptions`1
+T:interface PicoCfg.Abs.ICfgProvider
+T:interface PicoCfg.Abs.ICfgRoot
+T:interface PicoCfg.Abs.ICfgSection
+T:interface PicoCfg.Abs.ICfgSnapshot
+T:interface PicoCfg.Abs.ICfgSource

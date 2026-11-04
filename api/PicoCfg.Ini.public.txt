@@ -1,0 +1,3 @@
+M:PicoCfg.Ini.CfgBuilderIniExtensions.AddIni(PicoCfg.CfgBuilder builder, string ini) : PicoCfg.CfgBuilder static
+M:PicoCfg.Ini.CfgBuilderIniExtensions.AddIniFile(PicoCfg.CfgBuilder builder, string path) : PicoCfg.CfgBuilder static
+T:class PicoCfg.Ini.CfgBuilderIniExtensions

@@ -1,0 +1,8 @@
+M:PicoCfg.DI.CfgOptionsExtensions.RegisterCfgOptionsScoped``1(PicoDI.Abs.ISvcContainer container, string section = null) : PicoDI.Abs.ISvcContainer static
+M:PicoCfg.DI.CfgOptionsExtensions.RegisterCfgOptionsSingleton``1(PicoDI.Abs.ISvcContainer container, string section = null) : PicoDI.Abs.ISvcContainer static
+M:PicoCfg.DI.SvcContainerExtensions.RegisterCfgRoot(PicoDI.Abs.ISvcContainer container, PicoCfg.Abs.ICfgRoot root) : PicoDI.Abs.ISvcContainer static
+M:PicoCfg.DI.SvcContainerExtensions.RegisterCfgScoped``1(PicoDI.Abs.ISvcContainer container, string section = null) : PicoDI.Abs.ISvcContainer static
+M:PicoCfg.DI.SvcContainerExtensions.RegisterCfgSingleton``1(PicoDI.Abs.ISvcContainer container, string section = null) : PicoDI.Abs.ISvcContainer static
+M:PicoCfg.DI.SvcContainerExtensions.RegisterCfgTransient``1(PicoDI.Abs.ISvcContainer container, string section = null) : PicoDI.Abs.ISvcContainer static
+T:class PicoCfg.DI.CfgOptionsExtensions
+T:class PicoCfg.DI.SvcContainerExtensions

@@ -1,0 +1,3 @@
+M:PicoCfg.Yaml.CfgBuilderYamlExtensions.AddYaml(PicoCfg.CfgBuilder builder, string yaml) : PicoCfg.CfgBuilder static
+M:PicoCfg.Yaml.CfgBuilderYamlExtensions.AddYamlFile(PicoCfg.CfgBuilder builder, string path) : PicoCfg.CfgBuilder static
+T:class PicoCfg.Yaml.CfgBuilderYamlExtensions

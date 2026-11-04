@@ -1,0 +1,60 @@
+F:PicoSchedule.GraceMode.Disabled : PicoSchedule.GraceMode = 2 const
+F:PicoSchedule.GraceMode.Fixed : PicoSchedule.GraceMode = 1 const
+F:PicoSchedule.GraceMode.HalfPeriodClamped : PicoSchedule.GraceMode = 0 const
+F:PicoSchedule.GraceMode.value__ : int
+I:PicoSchedule.JobSnapshot : System.IEquatable`1<PicoSchedule.JobSnapshot>
+I:PicoSchedule.ScheduleJobOptions : System.IEquatable`1<PicoSchedule.ScheduleJobOptions>
+I:PicoSchedule.ScheduleLogEntry : System.IEquatable`1<PicoSchedule.ScheduleLogEntry>
+I:PicoSchedule.SchedulerOptions : System.IEquatable`1<PicoSchedule.SchedulerOptions>
+I:PicoSchedule.SystemClock : PicoSchedule.ITimeProvider
+M:PicoSchedule.CronPattern.EstimateInterval(System.DateTimeOffset afterUtc, System.TimeZoneInfo tz) : System.TimeSpan
+M:PicoSchedule.CronPattern.NextFire(System.DateTimeOffset afterUtc, System.TimeZoneInfo tz) : System.DateTimeOffset
+M:PicoSchedule.CronPattern.Parse(string expr) : PicoSchedule.CronPattern static
+M:PicoSchedule.ITriggerSink.FireAsync(System.Guid jobId, System.DateTimeOffset dueUtc, System.Collections.Generic.IReadOnlyDictionary`2<string, string> payload, System.Threading.CancellationToken ct) : System.Threading.Tasks.ValueTask abstract
+M:PicoSchedule.JobSnapshot..ctor(System.Guid JobId, string CronExpression, bool Enabled, System.DateTimeOffset NextFireUtc, System.DateTimeOffset LastTriggeredUtc, int ConsecutiveFailures, string LastError) : void
+M:PicoSchedule.ScheduleJobOptions..ctor(bool Enabled = true, string TimeZoneId = null, PicoSchedule.GraceMode Grace = 0, System.Nullable`1<System.TimeSpan> FixedGrace = null) : void
+M:PicoSchedule.ScheduleLogEntry..ctor(System.DateTimeOffset AtUtc, System.Guid JobId, string Level, string Message) : void
+M:PicoSchedule.Scheduler..ctor(PicoSchedule.SchedulerOptions options) : void
+M:PicoSchedule.Scheduler.Pause(System.Guid jobId) : void
+M:PicoSchedule.Scheduler.Register(System.Guid jobId, string cronExpression, PicoSchedule.ITriggerSink sink, System.Collections.Generic.IReadOnlyDictionary`2<string, string> payload = null, PicoSchedule.ScheduleJobOptions options = null) : System.Guid
+M:PicoSchedule.Scheduler.Reschedule(System.Guid jobId, string newCronExpression) : void
+M:PicoSchedule.Scheduler.Resume(System.Guid jobId) : void
+M:PicoSchedule.Scheduler.Start() : void
+M:PicoSchedule.Scheduler.StopAsync() : System.Threading.Tasks.ValueTask
+M:PicoSchedule.Scheduler.Unregister(System.Guid jobId) : void
+M:PicoSchedule.SchedulerOptions..ctor(System.TimeSpan TickInterval = null, int BurstLimit = 50, int MaxConsecutiveFailures = 5, System.Action`1<PicoSchedule.ScheduleLogEntry> Log = null, PicoSchedule.ITimeProvider Clock = null) : void
+M:PicoSchedule.SystemClock..ctor() : void
+P:PicoSchedule.ITimeProvider.UtcNow : System.DateTimeOffset { get; }
+P:PicoSchedule.JobSnapshot.ConsecutiveFailures : int { get; init; }
+P:PicoSchedule.JobSnapshot.CronExpression : string { get; init; }
+P:PicoSchedule.JobSnapshot.Enabled : bool { get; init; }
+P:PicoSchedule.JobSnapshot.JobId : System.Guid { get; init; }
+P:PicoSchedule.JobSnapshot.LastError : string { get; init; }
+P:PicoSchedule.JobSnapshot.LastTriggeredUtc : System.DateTimeOffset { get; init; }
+P:PicoSchedule.JobSnapshot.NextFireUtc : System.DateTimeOffset { get; init; }
+P:PicoSchedule.ScheduleJobOptions.Enabled : bool { get; init; }
+P:PicoSchedule.ScheduleJobOptions.FixedGrace : System.Nullable`1<System.TimeSpan> { get; init; }
+P:PicoSchedule.ScheduleJobOptions.Grace : PicoSchedule.GraceMode { get; init; }
+P:PicoSchedule.ScheduleJobOptions.ResolvedTz : System.TimeZoneInfo { get; }
+P:PicoSchedule.ScheduleJobOptions.TimeZoneId : string { get; init; }
+P:PicoSchedule.ScheduleLogEntry.AtUtc : System.DateTimeOffset { get; init; }
+P:PicoSchedule.ScheduleLogEntry.JobId : System.Guid { get; init; }
+P:PicoSchedule.ScheduleLogEntry.Level : string { get; init; }
+P:PicoSchedule.ScheduleLogEntry.Message : string { get; init; }
+P:PicoSchedule.Scheduler.Snapshot : System.Collections.Generic.IReadOnlyList`1<PicoSchedule.JobSnapshot> { get; }
+P:PicoSchedule.SchedulerOptions.BurstLimit : int { get; init; }
+P:PicoSchedule.SchedulerOptions.Clock : PicoSchedule.ITimeProvider { get; init; }
+P:PicoSchedule.SchedulerOptions.Log : System.Action`1<PicoSchedule.ScheduleLogEntry> { get; init; }
+P:PicoSchedule.SchedulerOptions.MaxConsecutiveFailures : int { get; init; }
+P:PicoSchedule.SchedulerOptions.TickInterval : System.TimeSpan { get; init; }
+P:PicoSchedule.SystemClock.UtcNow : System.DateTimeOffset { get; }
+T:class PicoSchedule.CronPattern
+T:class PicoSchedule.JobSnapshot
+T:class PicoSchedule.ScheduleJobOptions
+T:class PicoSchedule.ScheduleLogEntry
+T:class PicoSchedule.Scheduler
+T:class PicoSchedule.SchedulerOptions
+T:class PicoSchedule.SystemClock
+T:enum PicoSchedule.GraceMode
+T:interface PicoSchedule.ITimeProvider
+T:interface PicoSchedule.ITriggerSink

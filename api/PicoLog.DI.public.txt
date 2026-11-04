@@ -1,0 +1,25 @@
+F:PicoDI.Generated.PicoDiOpenGenericMetadata.Registration0 : int static readonly
+M:PicoLog.DI.LoggingOptions..ctor() : void
+M:PicoLog.DI.ReadFromConfiguration..ctor() : void
+M:PicoLog.DI.ReadFromConfiguration.RegisteredSinks() : PicoLog.DI.ReadFromConfiguration
+M:PicoLog.DI.SinkConfiguration..ctor() : void
+M:PicoLog.DI.SinkConfiguration.ColoredConsole() : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.Console() : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.File() : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.File(System.Action`1<PicoLog.FileSinkOptions> configure) : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.File(string path) : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.Sink(PicoLog.Abs.ILogSink sink) : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.Sink(System.Func`1<PicoLog.Abs.ILogSink> sinkFactory) : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SinkConfiguration.Sink(System.Func`2<PicoLog.Abs.ILogFormatter, PicoLog.Abs.ILogSink> sinkFactory) : PicoLog.DI.SinkConfiguration
+M:PicoLog.DI.SvcContainerExtensions.AddPicoLog(PicoDI.Abs.ISvcContainer container, System.Action`1<PicoLog.DI.LoggingOptions> configure) : PicoDI.Abs.ISvcContainer static
+P:PicoLog.DI.LoggingOptions.Factory : PicoLog.LoggerFactoryOptions { get; }
+P:PicoLog.DI.LoggingOptions.File : PicoLog.FileSinkOptions { get; }
+P:PicoLog.DI.LoggingOptions.Formatter : PicoLog.Abs.ILogFormatter { get; set; }
+P:PicoLog.DI.LoggingOptions.MinLevel : PicoLog.Abs.LogLevel { get; set; }
+P:PicoLog.DI.LoggingOptions.ReadFrom : PicoLog.DI.ReadFromConfiguration { get; }
+P:PicoLog.DI.LoggingOptions.WriteTo : PicoLog.DI.SinkConfiguration { get; }
+T:class PicoDI.Generated.PicoDiOpenGenericMetadata
+T:class PicoLog.DI.LoggingOptions
+T:class PicoLog.DI.ReadFromConfiguration
+T:class PicoLog.DI.SinkConfiguration
+T:class PicoLog.DI.SvcContainerExtensions

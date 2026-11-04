@@ -1,0 +1,103 @@
+F:PicoLog.FileSinkOptions.DefaultFilePath : string = "logs/app.log" const
+F:PicoLog.LogQueueFullMode.DropOldest : PicoLog.LogQueueFullMode = 0 const
+F:PicoLog.LogQueueFullMode.DropWrite : PicoLog.LogQueueFullMode = 1 const
+F:PicoLog.LogQueueFullMode.Wait : PicoLog.LogQueueFullMode = 2 const
+F:PicoLog.LogQueueFullMode.value__ : int
+F:PicoLog.PicoLogMetrics.EntriesDroppedName : string = "picolog.entries.dropped" const
+F:PicoLog.PicoLogMetrics.EntriesEnqueuedName : string = "picolog.entries.enqueued" const
+F:PicoLog.PicoLogMetrics.MeterName : string = "PicoLog" const
+F:PicoLog.PicoLogMetrics.QueuedEntriesName : string = "picolog.queue.entries" const
+F:PicoLog.PicoLogMetrics.ShutdownDrainDurationName : string = "picolog.shutdown.drain.duration" const
+F:PicoLog.PicoLogMetrics.ShutdownRejectedWritesName : string = "picolog.writes.rejected_after_shutdown" const
+F:PicoLog.PicoLogMetrics.SinkFailuresName : string = "picolog.sinks.failures" const
+I:PicoLog.ColoredConsoleSink : PicoLog.Abs.ILogSink
+I:PicoLog.ColoredConsoleSink : PicoLog.IConsoleFallbackSink
+I:PicoLog.ColoredConsoleSink : System.IAsyncDisposable
+I:PicoLog.ConsoleFormatter : PicoLog.Abs.ILogFormatter
+I:PicoLog.ConsoleSink : PicoLog.Abs.ILogSink
+I:PicoLog.ConsoleSink : PicoLog.IConsoleFallbackSink
+I:PicoLog.ConsoleSink : System.IAsyncDisposable
+I:PicoLog.FileSink : PicoLog.Abs.IFlushableLogSink
+I:PicoLog.FileSink : PicoLog.Abs.ILogSink
+I:PicoLog.FileSink : System.IAsyncDisposable
+I:PicoLog.LogFilterRule : System.IEquatable`1<PicoLog.LogFilterRule>
+I:PicoLog.LoggerFactory : PicoLog.Abs.IFlushableLoggerFactory
+I:PicoLog.LoggerFactory : PicoLog.Abs.ILoggerFactory
+I:PicoLog.LoggerFactory : System.IAsyncDisposable
+I:PicoLog.Logger`1 : PicoLog.Abs.ILogger
+I:PicoLog.Logger`1 : PicoLog.Abs.ILogger`1<TCategory>
+I:PicoLog.SeqSink : PicoLog.Abs.IBatchingLogSink
+I:PicoLog.SeqSink : PicoLog.Abs.IFlushableLogSink
+I:PicoLog.SeqSink : PicoLog.Abs.ILogSink
+I:PicoLog.SeqSink : System.IAsyncDisposable
+M:PicoLog.ColoredConsoleSink..ctor(PicoLog.Abs.ILogFormatter formatter, System.IO.TextWriter writer = null) : void
+M:PicoLog.ColoredConsoleSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.ColoredConsoleSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task override
+M:PicoLog.ConsoleFormatter..ctor() : void
+M:PicoLog.ConsoleFormatter.Format(PicoLog.Abs.LogEntry entry) : string override
+M:PicoLog.ConsoleSink..ctor(PicoLog.Abs.ILogFormatter formatter, System.IO.TextWriter writer = null) : void
+M:PicoLog.ConsoleSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.ConsoleSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task override
+M:PicoLog.FileSink..ctor(PicoLog.Abs.ILogFormatter formatter, PicoLog.FileSinkOptions options) : void
+M:PicoLog.FileSink..ctor(PicoLog.Abs.ILogFormatter formatter, string filePath = "logs/app.log") : void
+M:PicoLog.FileSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.FileSink.FlushAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.FileSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task override
+M:PicoLog.FileSinkOptions..ctor() : void
+M:PicoLog.FileSinkOptions.CreateValidatedCopy() : PicoLog.FileSinkOptions
+M:PicoLog.LogFilterRule..ctor(string CategoryPrefix, PicoLog.Abs.LogLevel MinLevel) : void
+M:PicoLog.LoggerFactory..ctor(System.Collections.Generic.IEnumerable`1<PicoLog.Abs.ILogSink> sinks, PicoLog.LoggerFactoryOptions options = null) : void
+M:PicoLog.LoggerFactory.CreateLogger(string categoryName) : PicoLog.Abs.ILogger override
+M:PicoLog.LoggerFactory.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.LoggerFactory.FlushAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.LoggerFactoryOptions..ctor() : void
+M:PicoLog.LoggerFactoryOptions.CreateValidatedCopy() : PicoLog.LoggerFactoryOptions
+M:PicoLog.Logger`1..ctor(PicoLog.Abs.ILoggerFactory factory) : void
+M:PicoLog.Logger`1.BeginScope``1(TState state) : System.IDisposable override
+M:PicoLog.Logger`1.Log(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void override
+M:PicoLog.Logger`1.Log(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void override
+M:PicoLog.Logger`1.Log(PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void override
+M:PicoLog.Logger`1.Log(PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception) : void override
+M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoLog.SeqSink..ctor(System.Net.Http.HttpClient httpClient, string apiKey = null, System.Nullable`1<System.TimeSpan> flushInterval = null, bool enableConsoleFallback = false, int maxRetries = 3, int retryBaseDelayMs = 100) : void
+M:PicoLog.SeqSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.SeqSink.FlushAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.SeqSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.Task override
+M:PicoLog.SeqSink.WriteBatchAsync(System.Collections.Generic.IReadOnlyList`1<PicoLog.Abs.LogEntry> batch, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+P:PicoLog.FileSinkOptions.AllowFlushInterrupt : bool { get; set; }
+P:PicoLog.FileSinkOptions.BatchSize : int { get; set; }
+P:PicoLog.FileSinkOptions.FilePath : string { get; set; }
+P:PicoLog.FileSinkOptions.HasExplicitFilePath : bool { get; }
+P:PicoLog.FileSinkOptions.MaxFileSizeBytes : long { get; set; }
+P:PicoLog.FileSinkOptions.MaxRetainedFiles : int { get; set; }
+P:PicoLog.FileSinkOptions.QueueCapacity : int { get; set; }
+P:PicoLog.FileSinkOptions.RotationInterval : System.TimeSpan { get; set; }
+P:PicoLog.LogFilterRule.CategoryPrefix : string { get; init; }
+P:PicoLog.LogFilterRule.MinLevel : PicoLog.Abs.LogLevel { get; init; }
+P:PicoLog.LoggerFactory.MinLevel : PicoLog.Abs.LogLevel { get; set; }
+P:PicoLog.LoggerFactoryOptions.DropMessagesOnFlush : bool { get; set; }
+P:PicoLog.LoggerFactoryOptions.FilterRules : System.Collections.Generic.IList`1<PicoLog.LogFilterRule> { get; set; }
+P:PicoLog.LoggerFactoryOptions.MinLevel : PicoLog.Abs.LogLevel { get; set; }
+P:PicoLog.LoggerFactoryOptions.OnMessagesDropped : System.Action`2<string, long> { get; set; }
+P:PicoLog.LoggerFactoryOptions.QueueCapacity : int { get; set; }
+P:PicoLog.LoggerFactoryOptions.QueueFullMode : PicoLog.LogQueueFullMode { get; set; }
+P:PicoLog.LoggerFactoryOptions.ShutdownTimeout : System.TimeSpan { get; set; }
+P:PicoLog.LoggerFactoryOptions.SyncWriteTimeout : System.TimeSpan { get; set; }
+P:PicoLog.LoggerFactoryOptions.TimestampProvider : System.TimeProvider { get; set; }
+P:PicoLog.SeqSink.FailureCount : long { get; }
+P:PicoLog.SeqSink.LastFailureTime : System.Nullable`1<System.DateTimeOffset> { get; }
+T:class PicoLog.ColoredConsoleSink
+T:class PicoLog.ConsoleFormatter
+T:class PicoLog.ConsoleSink
+T:class PicoLog.FileSink
+T:class PicoLog.FileSinkOptions
+T:class PicoLog.LogFilterRule
+T:class PicoLog.LoggerFactory
+T:class PicoLog.LoggerFactoryOptions
+T:class PicoLog.Logger`1
+T:class PicoLog.PicoLogMetrics
+T:class PicoLog.SeqSink
+T:enum PicoLog.LogQueueFullMode

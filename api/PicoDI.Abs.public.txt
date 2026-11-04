@@ -1,0 +1,115 @@
+B:PicoDI.Abs.HostedSvcRegistrationException : PicoDI.Abs.PicoDiException
+B:PicoDI.Abs.PicoDiException : System.Exception
+B:PicoDI.Abs.SourceGeneratorRequiredException : System.InvalidOperationException
+B:PicoDI.Abs.SvcConstructorAttribute : System.Attribute
+F:PicoDI.Abs.SvcDescriptor.RuntimeRegistrationId : int = -1 const
+F:PicoDI.Abs.SvcLifetime.Scoped : PicoDI.Abs.SvcLifetime = 2 const
+F:PicoDI.Abs.SvcLifetime.Singleton : PicoDI.Abs.SvcLifetime = 1 const
+F:PicoDI.Abs.SvcLifetime.Transient : PicoDI.Abs.SvcLifetime = 0 const
+F:PicoDI.Abs.SvcLifetime.value__ : byte
+I:PicoDI.Abs.BackgroundSvc : PicoDI.Abs.IHostedSvc
+I:PicoDI.Abs.BackgroundSvc : System.IAsyncDisposable
+I:PicoDI.Abs.IHost : System.IAsyncDisposable
+I:PicoDI.Abs.IHostedLifecycleSvc : PicoDI.Abs.IHostedSvc
+I:PicoDI.Abs.ISvcContainer : System.IAsyncDisposable
+I:PicoDI.Abs.ISvcScope : System.IAsyncDisposable
+M:PicoDI.Abs.BackgroundSvc..ctor() : void
+M:PicoDI.Abs.BackgroundSvc.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoDI.Abs.BackgroundSvc.ExecuteAsync(System.Threading.CancellationToken stoppingToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.BackgroundSvc.StartAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoDI.Abs.BackgroundSvc.StopAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.Clear() : void static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.HasApplied(PicoDI.Abs.ISvcContainer container) : bool static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.HasAppliedDeferred(PicoDI.Abs.ISvcContainer container) : bool static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.MarkApplied(PicoDI.Abs.ISvcContainer container) : void static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.Register(string configuratorId, System.Action`1<PicoDI.Abs.ISvcContainer> configurator) : void static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.RegisterDeferred(string configuratorId, System.Action`1<PicoDI.Abs.ISvcContainer> configurator) : void static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.TryApply(PicoDI.Abs.ISvcContainer container) : bool static
+M:PicoDI.Abs.GeneratorConfiguratorRegistry.TryApplyDeferred(PicoDI.Abs.ISvcContainer container) : bool static
+M:PicoDI.Abs.HostedSvcRegistrationException..ctor() : void
+M:PicoDI.Abs.HostedSvcRegistrationException..ctor(string message) : void
+M:PicoDI.Abs.HostedSvcRegistrationException..ctor(string message, System.Exception innerException) : void
+M:PicoDI.Abs.IHost.StartAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHost.StopAsync(System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedLifecycleSvc.StartedAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedLifecycleSvc.StartingAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedLifecycleSvc.StoppedAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedLifecycleSvc.StoppingAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedSvc.StartAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.IHostedSvc.StopAsync(System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task abstract
+M:PicoDI.Abs.ISvcContainer.CreateScope() : PicoDI.Abs.ISvcScope abstract
+M:PicoDI.Abs.ISvcContainer.IsRegistered(System.Type serviceType) : bool abstract
+M:PicoDI.Abs.ISvcContainer.Register(PicoDI.Abs.SvcDescriptor descriptor) : PicoDI.Abs.ISvcContainer abstract
+M:PicoDI.Abs.ISvcScope.CreateScope() : PicoDI.Abs.ISvcScope abstract
+M:PicoDI.Abs.ISvcScope.GetService(System.Type serviceType) : object abstract
+M:PicoDI.Abs.ISvcScope.GetServices(System.Type serviceType) : System.Collections.Generic.IReadOnlyList`1<object> abstract
+M:PicoDI.Abs.ISvcScope.TryGetService(System.Type serviceType, out object service) : bool abstract
+M:PicoDI.Abs.ISvcScope.TryGetServices(System.Type serviceType, out System.Collections.Generic.IReadOnlyList`1<object> services) : bool abstract
+M:PicoDI.Abs.PicoDiException..ctor() : void
+M:PicoDI.Abs.PicoDiException..ctor(string message) : void
+M:PicoDI.Abs.PicoDiException..ctor(string message, System.Exception innerException) : void
+M:PicoDI.Abs.SourceGeneratorRequiredException..ctor() : void
+M:PicoDI.Abs.SourceGeneratorRequiredException..ctor(string message) : void
+M:PicoDI.Abs.SourceGeneratorRequiredException..ctor(string message, System.Exception inner) : void
+M:PicoDI.Abs.SvcConstructorAttribute..ctor() : void
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.Register(PicoDI.Abs.ISvcContainer container, System.Type serviceType, PicoDI.Abs.SvcLifetime lifetime) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.Register(PicoDI.Abs.ISvcContainer container, System.Type serviceType, System.Func`2<PicoDI.Abs.ISvcScope, object> factory, PicoDI.Abs.SvcLifetime lifetime) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.Register(PicoDI.Abs.ISvcContainer container, System.Type serviceType, System.Type implementType, PicoDI.Abs.SvcLifetime lifetime) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.RegisterRange(PicoDI.Abs.ISvcContainer container, System.Collections.Generic.IEnumerable`1<PicoDI.Abs.SvcDescriptor> descriptors) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.Register``1(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TService> factory, PicoDI.Abs.SvcLifetime lifetime) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerGeneralRegistrationExtensions.Register``2(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TImplementation> factory, PicoDI.Abs.SvcLifetime lifetime) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerHostingExtensions.RegisterHostedSvc(PicoDI.Abs.ISvcContainer container, System.Type hostedServiceType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerHostingExtensions.RegisterHostedSvc(PicoDI.Abs.ISvcContainer container, System.Type hostedServiceType, System.Func`2<PicoDI.Abs.ISvcScope, object> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerHostingExtensions.RegisterHostedSvc``1(PicoDI.Abs.ISvcContainer container) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerHostingExtensions.RegisterHostedSvc``1(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, THostedSvc> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterScoped(PicoDI.Abs.ISvcContainer container, System.Type serviceType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterScoped(PicoDI.Abs.ISvcContainer container, System.Type serviceType, System.Type implementType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterScoped``1(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TService> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterScoped``2(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TImplementation> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingle(PicoDI.Abs.ISvcContainer container, System.Type serviceType, object instance) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingle``1(PicoDI.Abs.ISvcContainer container, TService instance) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingleton(PicoDI.Abs.ISvcContainer container, System.Type serviceType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingleton(PicoDI.Abs.ISvcContainer container, System.Type serviceType, System.Type implementType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingleton``1(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TService> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterSingleton``2(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TImplementation> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterTransient(PicoDI.Abs.ISvcContainer container, System.Type serviceType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterTransient(PicoDI.Abs.ISvcContainer container, System.Type serviceType, System.Type implementType) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterTransient``1(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TService> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions.RegisterTransient``2(PicoDI.Abs.ISvcContainer container, System.Func`2<PicoDI.Abs.ISvcScope, TImplementation> factory) : PicoDI.Abs.ISvcContainer static
+M:PicoDI.Abs.SvcDescriptor..ctor(System.Type serviceType, System.Func`2<PicoDI.Abs.ISvcScope, object> factory, PicoDI.Abs.SvcLifetime lifetime) : void
+M:PicoDI.Abs.SvcDescriptor..ctor(System.Type serviceType, System.Type implementationType, PicoDI.Abs.SvcLifetime lifetime = 1) : void
+M:PicoDI.Abs.SvcDescriptor.Create(System.Type serviceType, System.Func`2<PicoDI.Abs.ISvcScope, object> factory, PicoDI.Abs.SvcLifetime lifetime = 1) : PicoDI.Abs.SvcDescriptor static
+M:PicoDI.Abs.SvcDescriptor.Create``1(System.Func`2<PicoDI.Abs.ISvcScope, T> factory, PicoDI.Abs.SvcLifetime lifetime = 1) : PicoDI.Abs.SvcDescriptor static
+M:PicoDI.Abs.SvcDescriptor.FromInstance(System.Type serviceType, object instance) : PicoDI.Abs.SvcDescriptor static
+M:PicoDI.Abs.SvcHostedServiceRegistry.Contains(System.Type type) : bool static
+M:PicoDI.Abs.SvcHostedServiceRegistry.Register(System.Type hostedType) : void static
+M:PicoDI.Abs.SvcProviderExtensions.GetService``1(PicoDI.Abs.ISvcScope provider) : T static
+M:PicoDI.Abs.SvcProviderExtensions.GetServices``1(PicoDI.Abs.ISvcScope provider) : System.Collections.Generic.IReadOnlyList`1<T> static
+P:PicoDI.Abs.GeneratorConfiguratorRegistry.HasAny : bool { get; }
+P:PicoDI.Abs.GeneratorConfiguratorRegistry.HasAnyDeferred : bool { get; }
+P:PicoDI.Abs.IHost.Services : PicoDI.Abs.ISvcContainer { get; }
+P:PicoDI.Abs.SvcDescriptor.Factory : System.Func`2<PicoDI.Abs.ISvcScope, object> { get; }
+P:PicoDI.Abs.SvcDescriptor.GeneratedFactoryId : int { get; set; }
+P:PicoDI.Abs.SvcDescriptor.ImplementationType : System.Type { get; }
+P:PicoDI.Abs.SvcDescriptor.Lifetime : PicoDI.Abs.SvcLifetime { get; }
+P:PicoDI.Abs.SvcDescriptor.ServiceType : System.Type { get; }
+P:PicoDI.Abs.SvcDescriptor.SingleInstance : object { get; }
+T:class PicoDI.Abs.BackgroundSvc
+T:class PicoDI.Abs.GeneratorConfiguratorRegistry
+T:class PicoDI.Abs.HostedSvcRegistrationException
+T:class PicoDI.Abs.PicoDiException
+T:class PicoDI.Abs.SourceGeneratorRequiredException
+T:class PicoDI.Abs.SvcConstructorAttribute
+T:class PicoDI.Abs.SvcContainerGeneralRegistrationExtensions
+T:class PicoDI.Abs.SvcContainerHostingExtensions
+T:class PicoDI.Abs.SvcContainerLifetimeRegistrationExtensions
+T:class PicoDI.Abs.SvcDescriptor
+T:class PicoDI.Abs.SvcHostedServiceRegistry
+T:class PicoDI.Abs.SvcProviderExtensions
+T:enum PicoDI.Abs.SvcLifetime
+T:interface PicoDI.Abs.IHost
+T:interface PicoDI.Abs.IHostedLifecycleSvc
+T:interface PicoDI.Abs.IHostedSvc
+T:interface PicoDI.Abs.ISvcContainer
+T:interface PicoDI.Abs.ISvcScope
+T:struct PicoDI.Abs.VoidResult

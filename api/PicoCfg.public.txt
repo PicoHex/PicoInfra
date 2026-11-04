@@ -1,0 +1,90 @@
+B:PicoCfg.CfgValidationException : System.InvalidOperationException
+B:PicoCfg.PicoCfgBindRegistrationException : System.InvalidOperationException
+F:PicoCfg.CfgBindRuntime.ContractVersion : int = 3 const
+I:PicoCfg.CfgOptionsSnapshot`1 : PicoCfg.Abs.ICfgOptions`1<T>
+I:PicoCfg.CfgOptions`1 : PicoCfg.Abs.ICfgOptions`1<T>
+M:PicoCfg.Cfg.CreateBuilder() : PicoCfg.CfgBuilder static
+M:PicoCfg.CfgBind.BindInto``1(PicoCfg.Abs.ICfg cfg, T instance, string section = null) : void static
+M:PicoCfg.CfgBind.BindInto``1(PicoCfg.Abs.ICfgRoot root, T instance, string section = null) : void static
+M:PicoCfg.CfgBind.Bind``1(PicoCfg.Abs.ICfg cfg, string section = null) : T static
+M:PicoCfg.CfgBind.Bind``1(PicoCfg.Abs.ICfgRoot root, string section = null) : T static
+M:PicoCfg.CfgBind.TryBind``1(PicoCfg.Abs.ICfg cfg, out T value, string section = null) : bool static
+M:PicoCfg.CfgBind.TryBind``1(PicoCfg.Abs.ICfgRoot root, out T value, string section = null) : bool static
+M:PicoCfg.CfgBindRuntime.CombinePath(string section, string propertyName) : string static
+M:PicoCfg.CfgBindRuntime.CreateConversionException(string path, string targetTypeDisplayName, string memberDisplayName) : System.FormatException static
+M:PicoCfg.CfgBindRuntime.CreateScopedView(PicoCfg.Abs.ICfg cfg, string section) : PicoCfg.Abs.ICfg static
+M:PicoCfg.CfgBindRuntime.HasKeyPrefix(PicoCfg.Abs.ICfg cfg, string path) : bool static
+M:PicoCfg.CfgBindRuntime.Register``1(int contractVersion, System.Func`3<PicoCfg.Abs.ICfg, string, T> bind, PicoCfg.PicoCfgGeneratedTryBindDelegate`1<T> tryBind, PicoCfg.PicoCfgGeneratedBindIntoDelegate`1<T> bindInto) : void static
+M:PicoCfg.CfgBindRuntime.TryGetValueIgnoreCase(PicoCfg.Abs.ICfg cfg, string section, string propertyName, out string value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseBigInteger(string raw, out System.Numerics.BigInteger value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseBoolean(string raw, out bool value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseByte(string raw, out byte value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseDateOnly(string raw, out System.DateOnly value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseDateTime(string raw, out System.DateTime value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseDateTimeOffset(string raw, out System.DateTimeOffset value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseDecimal(string raw, out System.Decimal value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseDouble(string raw, out double value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseEnum``1(string raw, out TEnum value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseGuid(string raw, out System.Guid value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseInt16(string raw, out short value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseInt32(string raw, out int value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseInt64(string raw, out long value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseSByte(string raw, out sbyte value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseSingle(string raw, out float value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseTimeOnly(string raw, out System.TimeOnly value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseTimeSpan(string raw, out System.TimeSpan value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseUInt16(string raw, out ushort value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseUInt32(string raw, out uint value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseUInt64(string raw, out ulong value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseUri(string raw, out System.Uri value) : bool static
+M:PicoCfg.CfgBindRuntime.TryParseVersion(string raw, out System.Version value) : bool static
+M:PicoCfg.CfgBuilder..ctor() : void
+M:PicoCfg.CfgBuilder.AddCustomSource(PicoCfg.Abs.ICfgSource source) : PicoCfg.CfgBuilder
+M:PicoCfg.CfgBuilder.AddSource(PicoCfg.Abs.ICfgSource source) : PicoCfg.CfgBuilder
+M:PicoCfg.CfgBuilder.BuildAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<PicoCfg.Abs.ICfgRoot>
+M:PicoCfg.CfgBuilder.CreateFileWatchingSource(string filePath, System.Func`3<System.IO.Stream, System.Threading.CancellationToken, System.Threading.Tasks.Task`1<System.Collections.Generic.Dictionary`2<string, string>>> parser, System.Func`1<object> versionStampFactory = null, System.Nullable`1<System.TimeSpan> debounceInterval = null) : PicoCfg.Abs.ICfgSource
+M:PicoCfg.CfgOptionsSnapshot`1..ctor(PicoCfg.Abs.ICfg cfg, string section = null) : void
+M:PicoCfg.CfgOptions`1..ctor(PicoCfg.Abs.ICfg cfg, string section = null) : void
+M:PicoCfg.CfgValidationExtensions.BindAndValidate``1(PicoCfg.Abs.ICfg cfg, string section = null) : T static
+M:PicoCfg.CfgValidator.ValidateOrThrow``1(T instance) : void static
+M:PicoCfg.CfgValidator.Validate``1(T instance) : System.Collections.Generic.List`1<System.ComponentModel.DataAnnotations.ValidationResult> static
+M:PicoCfg.Extensions.CfgBuilderExtensions.Add(PicoCfg.CfgBuilder builder, System.Collections.Generic.IDictionary`2<string, string> configData, System.Func`1<object> versionStampFactory = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.Add(PicoCfg.CfgBuilder builder, System.Func`1<System.Collections.Generic.IEnumerable`1<System.Collections.Generic.KeyValuePair`2<string, string>>> dataFactory, System.Func`1<object> versionStampFactory = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.Add(PicoCfg.CfgBuilder builder, System.Func`2<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask`1<System.IO.Stream>> streamFactory, System.Text.Encoding encoding = null, System.Func`1<object> versionStampFactory = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.Add(PicoCfg.CfgBuilder builder, System.Func`2<System.Threading.CancellationToken, System.Threading.Tasks.ValueTask`1<System.IO.Stream>> streamFactory, string watchPath, System.Text.Encoding encoding = null, System.Func`1<object> versionStampFactory = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.Add(PicoCfg.CfgBuilder builder, string configContent, System.Text.Encoding encoding = null, System.Func`1<object> versionStampFactory = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.AddCommandLine(PicoCfg.CfgBuilder builder, string[] args, string prefix = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.AddConfiguration(PicoCfg.CfgBuilder builder, PicoCfg.Abs.ICfg chainedConfig) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.AddEnvironmentVariables(PicoCfg.CfgBuilder builder, string prefix = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgBuilderExtensions.AddKeyPerFile(PicoCfg.CfgBuilder builder, string directoryPath, System.Func`2<string, bool> keyFilter = null) : PicoCfg.CfgBuilder static
+M:PicoCfg.Extensions.CfgEnumerationExtensions.GetAll(PicoCfg.Abs.ICfg cfg) : System.Collections.Generic.IReadOnlyDictionary`2<string, string> static
+M:PicoCfg.PicoCfgBindRegistrationException.CreateIncompatible(System.Type targetType, string operationName, int expectedContractVersion, int actualContractVersion) : PicoCfg.PicoCfgBindRegistrationException static
+M:PicoCfg.PicoCfgBindRegistrationException.CreateMissing(System.Type targetType, string operationName) : PicoCfg.PicoCfgBindRegistrationException static
+M:PicoCfg.PicoCfgGeneratedBindIntoDelegate`1..ctor(object object, nint method) : void
+M:PicoCfg.PicoCfgGeneratedBindIntoDelegate`1.BeginInvoke(PicoCfg.Abs.ICfg cfg, string section, T instance, System.AsyncCallback callback, object object) : System.IAsyncResult virtual
+M:PicoCfg.PicoCfgGeneratedBindIntoDelegate`1.EndInvoke(System.IAsyncResult result) : void virtual
+M:PicoCfg.PicoCfgGeneratedBindIntoDelegate`1.Invoke(PicoCfg.Abs.ICfg cfg, string section, T instance) : void virtual
+M:PicoCfg.PicoCfgGeneratedTryBindDelegate`1..ctor(object object, nint method) : void
+M:PicoCfg.PicoCfgGeneratedTryBindDelegate`1.BeginInvoke(PicoCfg.Abs.ICfg cfg, string section, out T value, System.AsyncCallback callback, object object) : System.IAsyncResult virtual
+M:PicoCfg.PicoCfgGeneratedTryBindDelegate`1.EndInvoke(out T value, System.IAsyncResult result) : bool virtual
+M:PicoCfg.PicoCfgGeneratedTryBindDelegate`1.Invoke(PicoCfg.Abs.ICfg cfg, string section, out T value) : bool virtual
+P:PicoCfg.CfgBuilder.OnFileWatchError : System.Action`2<string, System.Exception> { get; set; }
+P:PicoCfg.CfgBuilder.OnFormatError : System.Action`2<string, int> { get; set; }
+P:PicoCfg.CfgOptionsSnapshot`1.Value : T { get; }
+P:PicoCfg.CfgOptions`1.Value : T { get; }
+P:PicoCfg.CfgValidationException.Errors : System.Collections.Generic.IReadOnlyList`1<System.ComponentModel.DataAnnotations.ValidationResult> { get; }
+P:PicoCfg.CfgValidationException.TargetType : System.Type { get; }
+T:class PicoCfg.Cfg
+T:class PicoCfg.CfgBind
+T:class PicoCfg.CfgBindRuntime
+T:class PicoCfg.CfgBuilder
+T:class PicoCfg.CfgOptionsSnapshot`1
+T:class PicoCfg.CfgOptions`1
+T:class PicoCfg.CfgValidationException
+T:class PicoCfg.CfgValidationExtensions
+T:class PicoCfg.CfgValidator
+T:class PicoCfg.Extensions.CfgBuilderExtensions
+T:class PicoCfg.Extensions.CfgEnumerationExtensions
+T:class PicoCfg.PicoCfgBindRegistrationException
+T:delegate PicoCfg.PicoCfgGeneratedBindIntoDelegate`1
+T:delegate PicoCfg.PicoCfgGeneratedTryBindDelegate`1
