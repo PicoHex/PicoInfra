@@ -8,6 +8,20 @@ the test that pins it. Each one ends with what a consumer must do, not with a su
 
 ## Unreleased
 
+### PicoCfg — `AddToml` / `AddYaml` gain a `flattenArrays` parameter
+
+- **Breaking (binary).** `AddToml` / `AddTomlFile` (`PicoCfg.Toml`) and `AddYaml` / `AddYamlFile`
+  (`PicoCfg.Yaml`) now take a third parameter, `bool flattenArrays = false`, the switch `AddJson` /
+  `AddJsonFile` already had. The optional parameter keeps **source** compatibility — an existing
+  call compiles unchanged — but the two-parameter overload is gone, so an assembly compiled against
+  **2026.10.1** binds a method that no longer exists and throws `MissingMethodException` at first
+  call: **recompile it**. With the default, arrays stay out of the flat key space exactly as
+  before; `flattenArrays: true` indexes elements into the path (`servers:0:name`, `ports:0`), the
+  shape `CfgBind` already binds lists from. — `edf2cfd`.
+- **What to do.** No package and no method name changes: recompile, and switch the flag on only for
+  a document whose arrays you actually bind. A document whose arrays you do not bind keeps exactly
+  the keys it has today.
+
 ### PicoLog — `SeqSink` moved from `PicoLog` to `PicoLog.Json`
 
 - **Breaking (binary).** `PicoLog.SeqSink` now ships in the **`PicoLog.Json`** package, not in
