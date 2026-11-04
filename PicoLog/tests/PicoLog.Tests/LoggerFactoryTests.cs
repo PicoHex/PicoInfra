@@ -1312,12 +1312,6 @@ public sealed class LoggerFactoryTests
     public async Task DisposeAsync_CancelsInFlightSinkWrites_WhenShutdownTimeoutExpires()
     {
         var sink = new BlockingSink();
-        // Use a generous ShutdownTimeout (500ms) to tolerate timer-callback
-        // delays on ThreadPool-saturated CI runners (especially ARM64 where
-        // parallel test contention is higher). CancellationTokenSource(TimeSpan)
-        // uses a ThreadPool timer callback; when all pool threads are busy the
-        // cancellation can be delayed, causing DisposeAsync to hang past the
-        // test's own WaitAsync deadline.
         var options = new LoggerFactoryOptions { ShutdownTimeout = TimeSpan.FromMilliseconds(500) };
         await using var factory = new LoggerFactory([sink], options);
         var logger = factory.CreateLogger("Tests.Category");
@@ -1329,11 +1323,58 @@ public sealed class LoggerFactoryTests
 
             var disposeTask = factory.DisposeAsync().AsTask();
 
-            await disposeTask.WaitAsync(TimeSpan.FromSeconds(10));
+            // No waiting: the drain gives the in-flight write a full ShutdownTimeout to
+            // finish, so it cannot be cancelled yet. This half of the assertion is exact.
+            await Assert.That(sink.ObservedCancellationCount).IsEqualTo(0);
+
+            // The behaviour under test is the OUTCOME — the expired shutdown timeout cancels
+            // the in-flight write instead of letting it complete — so that is what is asserted,
+            // not how long the drain took to unwind. The shutdown timeout is a ThreadPool timer
+            // callback and every hop back to DisposeAsync needs a pool thread, so a busy runner
+            // stretches the drain without bound. Measured on this suite: 507-516 ms idle;
+            // 2.6-10.4 s with all 199 tests on a 4-vCPU view while 16 CPU burners run (a 10 s
+            // bound failed 1 run in 8 there, which is exactly CI run 41813752088 — 10 s timeout
+            // on win-x64 while the same suite passed on linux-x64); and unbounded once every
+            // pool thread is occupied, because a saturated pool never dispatches the timer
+            // callback at all. So the bound below is only a deadlock guard: a drain that never
+            // cancels the write never returns, so any finite bound catches it, and 60 s is ~6x
+            // the worst drain measured under induced load.
+            await Assert
+                .That(await DrainsWithinAsync(disposeTask, DrainDeadlockGuard))
+                .IsTrue()
+                .Because(
+                    $"DisposeAsync must finish once the expired shutdown timeout cancels the "
+                        + $"in-flight write; it was still running {DrainDeadlockGuard.TotalSeconds:0} s "
+                        + "later, which means the drain is stuck, not merely slow."
+                );
+
+            await Assert.That(sink.ObservedCancellationCount).IsEqualTo(1);
+            await Assert.That(sink.CompletedWriteCount).IsEqualTo(0);
+            await Assert.That(sink.WrittenCount).IsEqualTo(1);
         }
         finally
         {
             sink.Release();
+        }
+    }
+
+    /// <summary>
+    /// Deadlock guard for a drain: <see langword="false"/> means the drain outlived the bound
+    /// and is stuck. Never treat a value near this bound as a timing measurement — see the
+    /// comment in <see cref="DisposeAsync_CancelsInFlightSinkWrites_WhenShutdownTimeoutExpires"/>.
+    /// </summary>
+    private static readonly TimeSpan DrainDeadlockGuard = TimeSpan.FromSeconds(60);
+
+    private static async Task<bool> DrainsWithinAsync(Task drain, TimeSpan guard)
+    {
+        try
+        {
+            await drain.WaitAsync(guard);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
         }
     }
 
@@ -1638,10 +1679,18 @@ public sealed class LoggerFactoryTests
             TaskCreationOptions.RunContinuationsAsynchronously
         );
         private int _writtenCount;
+        private int _observedCancellationCount;
+        private int _completedWriteCount;
 
         public IReadOnlyCollection<LogEntry> Entries => _entries.ToArray();
 
-        public int WrittenCount => _writtenCount;
+        public int WrittenCount => Volatile.Read(ref _writtenCount);
+
+        /// <summary>Writes whose <see cref="CancellationToken"/> was cancelled mid-flight.</summary>
+        public int ObservedCancellationCount => Volatile.Read(ref _observedCancellationCount);
+
+        /// <summary>Writes released without being cancelled — i.e. that got through.</summary>
+        public int CompletedWriteCount => Volatile.Read(ref _completedWriteCount);
 
         public Task WriteStarted => _writeStarted.Task;
 
@@ -1651,7 +1700,16 @@ public sealed class LoggerFactoryTests
             Interlocked.Increment(ref _writtenCount);
             _writeStarted.TrySetResult();
 
-            await _release.Task.WaitAsync(cancellationToken);
+            try
+            {
+                await _release.Task.WaitAsync(cancellationToken);
+                Interlocked.Increment(ref _completedWriteCount);
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Increment(ref _observedCancellationCount);
+                throw;
+            }
         }
 
         public void Release() => _release.TrySetResult();
