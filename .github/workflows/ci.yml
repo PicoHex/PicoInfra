@@ -23,6 +23,34 @@ env:
   DOTNET_VERSION: 10.0.x
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
+# ---------------------------------------------------------------------------
+# Step gating policy - read this before adding or removing an `if:` on a step
+#
+# A step that fails stops the rest of its job, because `if: success()` is implicit. That default
+# is correct for steps that ship or produce deliverables: this workflow never packs packages or
+# builds a sample off a red test run, and release.yml never packs packages off a red test run
+# either.
+#
+# The default is wrong for steps that report: a verdict-producing gate, a hang/crash-dump upload,
+# a coverage upload. Downstream of a failed test step those silently become `skipped`, and in the
+# run summary "skipped" is indistinguishable from "checked and green". That is exactly how run
+# 41780481138 hid two things at once: the PicoLog `AOT publish validation` gate never ran on any
+# RID (skipped on 8a41039 at step 7/8 and again on 8c11707 at step 7/11), and the coverage-picolog
+# artifact was never uploaded even though its 673,846 B report was sitting in picolog-dumps.
+#
+# So every reporting step carries an explicit `if: ${{ !cancelled() }}`, ANDed with whatever matrix
+# condition it already had. `!cancelled()` means "still run if an earlier step failed, but stand
+# down on an explicit cancel" - unlike `always()`, a cancelled run does not go on publishing.
+#
+# Running the AOT gate on a red job cannot ship a broken artifact: nothing in this workflow pushes
+# to a feed, and the `dotnet publish` output is never uploaded. The gate only adds its own step
+# verdict - and a hard job failure if the publish really is broken.
+#
+# Current split, per job: Run/*tests* -> default, they gate everything after them.
+#                        AOT publish validation, coverage upload, dump upload -> !cancelled().
+#                        Pack CI packages, sample smoke tests, publish!=run guard -> default.
+# ---------------------------------------------------------------------------
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -188,8 +216,9 @@ jobs:
       - name: Run tests
         if: matrix.rid != 'linux-x64'
         run: dotnet test --project PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj --configuration Release --no-build --verbosity normal --no-progress -p:UseProjectReferences=true
+      # Diagnostic step: runs on a red job by design (see "Step gating policy" at the top).
       - name: Upload coverage
-        if: matrix.rid == 'linux-x64'
+        if: ${{ !cancelled() && matrix.rid == 'linux-x64' }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-picodi
@@ -197,15 +226,20 @@ jobs:
           # An upload that matches nothing is how this artefact stayed empty: fail instead.
           if-no-files-found: error
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoDI/src/PicoDI/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoDI.Sample (managed smoke test)
         run: dotnet run --project PicoDI/samples/PicoDI.Sample/ -c Release -p:PublishAot=false
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoDI.Sample.Host (managed smoke test)
         run: dotnet run --project PicoDI/samples/PicoDI.Sample.Host/ -c Release -p:PublishAot=false
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
         shell: bash
         run: |
@@ -312,8 +346,9 @@ jobs:
       - name: Run PicoCfg tests
         if: matrix.rid != 'linux-x64'
         run: dotnet test --project PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj --configuration Release --no-build --verbosity normal --no-progress -p:UseProjectReferences=true
+      # Diagnostic step: runs on a red job by design (see "Step gating policy" at the top).
       - name: Upload PicoCfg coverage
-        if: matrix.rid == 'linux-x64'
+        if: ${{ !cancelled() && matrix.rid == 'linux-x64' }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-picocfg
@@ -333,9 +368,12 @@ jobs:
       - name: Run PicoCfg.Toml tests
         run: dotnet test --project PicoCfg/tests/PicoCfg.Toml.Tests/PicoCfg.Toml.Tests.csproj --configuration Release --no-build --verbosity normal --no-progress -p:UseProjectReferences=true
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoCfg/src/PicoCfg/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
         shell: bash
         run: |
@@ -491,8 +529,9 @@ jobs:
       - name: Run PicoLog.Json tests
         if: matrix.rid != 'linux-x64'
         run: dotnet test --project PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj --configuration Release --no-build --verbosity normal -p:UseProjectReferences=true -- --hangdump --hangdump-timeout 10m --hangdump-type Full --crashdump --crashdump-type Full --results-directory=${{ github.workspace }}/artifacts/test-results
+      # Diagnostic step: runs on a red job by design (see "Step gating policy" at the top).
       - name: Upload hang/crash dumps
-        if: always()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: picolog-dumps-${{ matrix.logical-target }}
@@ -500,8 +539,9 @@ jobs:
             ${{ github.workspace }}/artifacts/test-results/**
           if-no-files-found: ignore
           retention-days: 7
+      # Diagnostic step: runs on a red job by design (see "Step gating policy" at the top).
       - name: Upload coverage
-        if: matrix.rid == 'linux-x64'
+        if: ${{ !cancelled() && matrix.rid == 'linux-x64' }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-picolog
@@ -511,12 +551,16 @@ jobs:
           path: ${{ github.workspace }}/artifacts/test-results/*.cobertura.xml
           if-no-files-found: error
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoLog/src/PicoLog/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoLog.Sample (managed smoke test)
         run: dotnet run --project PicoLog/samples/PicoLog.Sample/ -c Release -p:PublishAot=false
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
         shell: bash
         run: |
@@ -621,9 +665,13 @@ jobs:
       - name: Build PicoAop benchmarks
         run: dotnet build PicoAop/benchmarks/PicoAop.Benchmarks/PicoAop.Benchmarks.csproj --configuration Release -p:PublishAot=false
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoAop/samples/PicoAop.Sample/ -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose: it reads the publish directory, so on a failed publish it would only
+      # add a second, misleading failure on top of the real one from the gate above.
       - name: Run AOT-published sample (publish != run guard)
         shell: bash
         run: |
@@ -640,6 +688,7 @@ jobs:
             "$PUBLISH_DIR/PicoAop.Sample"
           fi
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
         shell: bash
         run: |
@@ -732,9 +781,13 @@ jobs:
         run: |
           dotnet test --project PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj --configuration Release --no-build -p:UseProjectReferences=true
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoMediator/samples/PicoMediator.Sample/ -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose: it reads the publish directory, so on a failed publish it would only
+      # add a second, misleading failure on top of the real one from the gate above.
       - name: Run AOT-published sample (publish != run guard)
         shell: bash
         run: |
@@ -751,6 +804,7 @@ jobs:
             "$PUBLISH_DIR/PicoMediator.Sample"
           fi
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
         shell: bash
         run: |
@@ -841,9 +895,13 @@ jobs:
       - name: Run PicoSchedule tests
         run: dotnet test --project PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-build
 
+      # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
+        if: ${{ !cancelled() }}
         run: dotnet publish PicoSchedule/samples/PicoSchedule.Sample/ -r ${{ matrix.rid }} --configuration Release
 
+      # Gated on purpose: it reads the publish directory, so on a failed publish it would only
+      # add a second, misleading failure on top of the real one from the gate above.
       - name: Run AOT-published sample (publish != run guard)
         shell: bash
         run: |
@@ -860,6 +918,7 @@ jobs:
             "$PUBLISH_DIR/PicoSchedule.Sample"
           fi
 
+      # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI package (package-consumer validation)
         shell: bash
         run: |
