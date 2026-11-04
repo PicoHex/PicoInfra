@@ -470,10 +470,12 @@ it, not by a build that fails on the diff.
 `namespace PicoLog`, so a **source** build needs one line: `dotnet add package PicoLog.Json`.
 No source change follows: `using PicoLog;` and `new SeqSink(...)` still compile.
 
-It is **not binary-compatible.** An assembly compiled against `PicoLog` ≤ 2026.10 holds a
+It is **not binary-compatible.** An assembly compiled against `PicoLog` ≤ 2026.10.1 holds a
 `PicoLog.SeqSink` type reference into the assembly `PicoLog`, and that type is no longer in it, so
-the first use throws `TypeLoadException`. Recompile it against `PicoLog.Json` — and note that
-both escape hatches a version like this usually ships are refused on purpose:
+the first use throws `TypeLoadException`. That is **every published version**: `2026.10.1` is the
+newest tag and it still carries `SeqSink` inside `PicoLog`, so the boundary is the **next tag**, not
+a date. Recompile it against `PicoLog.Json` — and note that both escape hatches a version like
+this usually ships are refused on purpose:
 
 - a `[TypeForwardedTo(typeof(SeqSink))]` in `PicoLog` would make `PicoLog.dll` reference
   `PicoLog.Json.dll`, and through it the serializer — exactly the dependency this split removes;
