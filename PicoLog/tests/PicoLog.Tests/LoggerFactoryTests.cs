@@ -798,10 +798,20 @@ public sealed class LoggerFactoryTests
     private static readonly TimeSpan BlockedObservationWindow = TimeSpan.FromMilliseconds(300);
 
     /// <summary>
-    /// Deadlock guard for a sync write that must return once its queue has room. Never read a value
-    /// near this bound as a timing measurement.
+    /// Deadlock guard for a sync write that must return — once its queue has room, or once shutdown
+    /// has been observed. Never read a value near this bound as a timing measurement.
     /// </summary>
     private static readonly TimeSpan SyncWriteDeadlockGuard = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// What a sync writer that ignored the shutdown signal would sleep out in its backoff loop
+    /// before giving up. Derived from the guard rather than picked by hand, and deliberately far
+    /// above it: this is the separation that makes the guard in
+    /// <see cref="Wait_Mode_SyncWrite_ReturnsPromptlyWhenShutdownStartsDuringBackoff"/> an outcome
+    /// claim, because a slept-out backoff cannot land inside the guard — so "returned before the
+    /// guard expired" and "returned because shutdown was observed" say the same thing.
+    /// </summary>
+    private static readonly TimeSpan BackoffSleepOutTimeout = SyncWriteDeadlockGuard * 5;
 
     private static bool StaysIncomplete(Task task, TimeSpan window)
     {
@@ -833,64 +843,66 @@ public sealed class LoggerFactoryTests
     [Test]
     public async Task Wait_Mode_SyncWrite_ReturnsPromptlyWhenShutdownStartsDuringBackoff()
     {
-        // Regression test: TryEnqueueSyncWithWait used to ignore the channel's
-        // completed state and keep sleeping in its backoff loop until the full
-        // SyncWriteTimeout elapsed, because ChannelWriter.TryWrite returns
-        // false (rather than throwing ChannelClosedException) on a completed
-        // channel. Under concurrent shutdown this pinned ThreadPool workers
-        // for the full timeout each, intermittently tripping CI hang detection
-        // under coverage instrumentation on linux-x64.
-        // completed state and keep sleeping in its backoff loop until the full
-        // SyncWriteTimeout elapsed, because ChannelWriter.TryWrite returns
-        // false (rather than throwing ChannelClosedException) on a completed
-        // channel. Under concurrent shutdown this pinned ThreadPool workers
-        // for the full timeout each, intermittently tripping CI hang detection
-        // under coverage instrumentation on linux-x64.
+        // Regression test: TryEnqueueSyncWithWait used to ignore the channel's completed state and
+        // keep sleeping in its backoff loop until the full SyncWriteTimeout elapsed, because
+        // ChannelWriter.TryWrite returns false (rather than throwing ChannelClosedException) on a
+        // completed channel. Under concurrent shutdown this pinned ThreadPool workers for the full
+        // timeout each, intermittently tripping CI hang detection under coverage instrumentation on
+        // linux-x64.
         //
-        // Contract: once factory shutdown has been signaled, any sync writer
-        // currently waiting in the backoff loop must observe the shutdown and
-        // return promptly (well under SyncWriteTimeout).
+        // Contract: once factory shutdown has been signalled, a sync writer already waiting in the
+        // backoff loop returns — it does not sleep out the rest of SyncWriteTimeout.
         //
-        // This test deliberately uses dedicated Thread instances (not Task.Run
-        // on the ThreadPool) for the third writer and the disposer, so the
-        // timing is not affected by ThreadPool saturation when many TUnit
-        // tests run in parallel on CI. It also guarantees cleanup in a
-        // finally block so that an assertion failure cannot leak the held
-        // BlockingSink + un-disposed factory and deadlock the test host.
+        // What is asserted is that outcome, never how long this thread took to notice it. Noticing
+        // a completed TaskCompletionSource is itself a ThreadPool work item
+        // (RunContinuationsAsynchronously hands the completion to the pool) and Task.WaitAsync's
+        // timeout is a pool timer, so the 10 s WaitAsync this test used to end with raced the
+        // writer's return against the pool scheduling the notification. Measured with all 199 tests
+        // on a 4-vCPU view (DOTNET_PROCESSOR_COUNT=4) while CPU burners held every core at 100%:
+        // in 18 loaded runs the writer returned 22-190 ms after the disposer thread was started,
+        // i.e. within one backoff tick of the shutdown signal, while this thread observed that same
+        // completion anywhere from 43 ms to 17.5 s after that same moment — and the 10 s bound
+        // reddened one full-suite run in seven with the write itself long returned.
+        //
+        // So the return is observed by joining the writer's own dedicated thread — OS scheduling,
+        // no pool — against the shared sync-write deadlock guard, and the guard is only allowed to
+        // mean "stuck" because SyncWriteTimeout (what a writer that ignored the shutdown signal
+        // would sleep out) is kept far outside it.
         var sink = new BlockingSink();
-        // SyncWriteTimeout is deliberately large so the pre-fix code would
-        // block for many seconds (>> the assertion budget below).
+        long reportedDropCount = 0;
         var options = new LoggerFactoryOptions
         {
             QueueCapacity = 1,
             QueueFullMode = LogQueueFullMode.Wait,
-            SyncWriteTimeout = TimeSpan.FromSeconds(30),
+            SyncWriteTimeout = BackoffSleepOutTimeout,
+            // The drain has to stay parked on the sink for the whole observation: its own timeout
+            // cancels the in-flight write, which would free the queue and let the writer return
+            // through a different door. Drain timeouts are covered by
+            // DisposeAsync_CancelsInFlightSinkWrites_WhenShutdownTimeoutExpires.
+            ShutdownTimeout = TimeSpan.Zero,
+            OnMessagesDropped = (_, droppedCount) => reportedDropCount = droppedCount,
         };
         var factory = new LoggerFactory([sink], options);
+        var logger = factory.CreateLogger("Tests.Category");
 
+        var thirdWriteReturned = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         Thread? thirdWriteThread = null;
-        Thread? disposeThread = null;
-        var thirdWriteSignal = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
-        var disposeSignal = new TaskCompletionSource(
-            TaskCreationOptions.RunContinuationsAsynchronously
-        );
+        Task? drain = null;
 
         try
         {
-            var logger = factory.CreateLogger("Tests.Category");
-
             // Drive the queue to the state where a third write must block:
-            //   - "first" is dispatched and the sink blocks on it.
+            //   - "first" is dispatched and the sink parks it.
             //   - "second" fills the bounded queue (capacity 1).
             logger.Info("first");
             await sink.WriteStarted;
             logger.Info("second");
 
-            // Run the third sync write on a dedicated thread so it is
-            // guaranteed to enter the backoff loop regardless of ThreadPool
-            // saturation on the CI runner.
+            // The sync write runs on a dedicated thread: its backoff loop is an OS sleep on the
+            // writing thread, so running it on the pool would put the pool inside the object under
+            // test.
             thirdWriteThread = new Thread(() =>
             {
                 try
@@ -899,7 +911,7 @@ public sealed class LoggerFactoryTests
                 }
                 finally
                 {
-                    thirdWriteSignal.TrySetResult();
+                    thirdWriteReturned.TrySetResult();
                 }
             })
             {
@@ -908,75 +920,82 @@ public sealed class LoggerFactoryTests
             };
             thirdWriteThread.Start();
 
-            // Give the third writer time to enter the backoff loop.
-            await Task.Delay(200);
-            await Assert.That(thirdWriteSignal.Task.IsCompleted).IsFalse();
+            // "Must not have happened yet", stated as a fact rather than as a delay long enough to
+            // hope for it: a full Wait-mode queue holds the writer. It cannot be admitted earlier
+            // than this check either — only the in-flight write can free a slot, and that write is
+            // parked in the sink, not scheduled by the pool.
+            await Assert
+                .That(StaysIncomplete(thirdWriteReturned.Task, BlockedObservationWindow))
+                .IsTrue()
+                .Because(
+                    "a full Wait-mode queue must hold a sync write in its backoff loop: not admit"
+                        + " it past capacity and not drop it early"
+                );
+            await Assert.That(sink.WrittenCount).IsEqualTo(1);
 
-            // Trigger shutdown concurrently on its own dedicated thread.
-            // DisposeAsync will block on the still-busy sink until we release
-            // it in the finally block, but Complete() fires synchronously
-            // before that, which is what the third writer must observe.
-            disposeThread = new Thread(() =>
-            {
-                try
-                {
-                    factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                }
-                finally
-                {
-                    disposeSignal.TrySetResult();
-                }
-            })
-            {
-                IsBackground = true,
-                Name = "PicoLog.Test.Disposer",
-            };
-            disposeThread.Start();
+            // Signal shutdown. DisposeAsync completes the queue in its synchronous prefix, before
+            // its first incomplete await, so the signal the writer has to observe has already been
+            // sent by the time this returns to this thread.
+            drain = factory.DisposeAsync().AsTask();
 
-            // Contract: with the fix the third write returns within one
-            // maxBackoffMs (~25 ms) of Complete(). Without the fix it would
-            // block until SyncWriteTimeout (30 s) and the WaitAsync below
-            // would throw TimeoutException after 3 s.
-            await thirdWriteSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            // The assertion under test: the write returns. Joining the writer's own thread keeps
+            // the observation off the pool, and the guard is shorter than the backoff a writer that
+            // ignored shutdown would sleep out, so returning inside it means shutdown was observed.
+            await Assert
+                .That(thirdWriteThread.Join(SyncWriteDeadlockGuard))
+                .IsTrue()
+                .Because(
+                    "the write must return once shutdown is signalled instead of sleeping out"
+                        + $" SyncWriteTimeout; it was still in its backoff loop "
+                        + $"{SyncWriteDeadlockGuard.TotalSeconds:0} s later, which is a stuck"
+                        + " writer, not a slow one."
+                );
+
+            // Exact state at the moment the write returned: the sink is still parked on "first", so
+            // no room appeared, the drain is still blocked on that sink, and the third write never
+            // reached the sink. Observing the shutdown is the only thing that could have released
+            // it.
+            await Assert
+                .That(sink.WrittenCount)
+                .IsEqualTo(1)
+                .Because(
+                    "the blocked write must return without reaching the sink — nothing may be"
+                        + " written while the queue is full and the sink is parked"
+                );
+            await Assert
+                .That(drain.IsCompleted)
+                .IsFalse()
+                .Because(
+                    "the blocked write must return while the drain is still blocked on the sink;"
+                        + " otherwise the drain, not the shutdown signal, could have released it"
+                );
         }
         finally
         {
-            // Always unblock the sink so the dispatcher thread can drain
-            // and DisposeAsync can return, even if an assertion threw above.
+            // Always unblock the sink so the dispatcher can drain and DisposeAsync can return, even
+            // if an assertion threw above: the held sink plus a live factory would otherwise leak
+            // into the rest of the run.
             sink.Release();
-
-            // Let the disposer thread complete, then make absolutely sure
-            // the factory is disposed (idempotent on the already-disposed
-            // path). Bound the wait so a real bug can't hang the test host.
-            if (disposeThread is not null)
-            {
-                await disposeSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            }
-            else
-            {
-                try
-                {
-                    await factory.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
-                }
-                catch
-                {
-                    // Best-effort cleanup; the primary assertion failure
-                    // (if any) is what we want surfaced to the test runner.
-                }
-            }
-
-            if (thirdWriteThread is not null)
-            {
-                try
-                {
-                    await thirdWriteSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
-                }
-                catch
-                {
-                    // Same rationale as above.
-                }
-            }
+            drain ??= factory.DisposeAsync().AsTask();
         }
+
+        // Not the subject of this test, but the drain must not be stuck either.
+        await Assert
+            .That(await CompletesWithinAsync(drain, DrainDeadlockGuard))
+            .IsTrue()
+            .Because(
+                "the drain must finish once the sink is released; it was still running "
+                    + $"{DrainDeadlockGuard.TotalSeconds:0} s later, which is stuck, not slow."
+            );
+
+        // What the pipeline observed: the third write was rejected, so it never entered the queue
+        // and never displaced the write it was waiting behind; the writes that were queued arrived
+        // in the order they were written.
+        await Assert.That(reportedDropCount).IsEqualTo(0);
+        await Assert.That(sink.WrittenCount).IsEqualTo(2);
+        await Assert
+            .That(string.Join("|", sink.Entries.Select(static entry => entry.Message)))
+            .IsEqualTo("first|second");
     }
 
     [Test]
