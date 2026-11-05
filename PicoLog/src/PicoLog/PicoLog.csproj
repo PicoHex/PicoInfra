@@ -31,23 +31,50 @@
     PicoLog_ReferencesNoSerializer checks the ASSEMBLY's references, so it sees a serializer that
     is USED — including one that ships inside the shared framework (System.Text.Json lives in
     Microsoft.NETCore.App, so `using System.Text.Json` needs no PackageReference at all). What it
-    cannot see is an UNUSED <PackageReference>: Roslyn emits an AssemblyRef only for assemblies
-    whose types are used, so a bare `<PackageReference Include="PicoJetson" />` leaves PicoLog.dll's
-    metadata unchanged and that pin green (measured: its 194 tests still pass against exactly that
-    build) — while every consumer of PicoLog still inherits the package. The project file is the
-    only place that half is visible.
+    cannot see is an UNUSED reference: Roslyn emits an AssemblyRef only for assemblies whose types
+    are used, so a bare `<PackageReference Include="PicoJetson" />` leaves PicoLog.dll's metadata
+    unchanged and that pin green (measured: its 194 tests still pass against exactly that build) —
+    while every consumer of PicoLog still inherits the nuspec <dependency>. The project file is the
+    only place that half is visible, and the dependency list is what ships.
 
-    The allow-list is exactly PicoLog.Abs: core's entire dependency list is PicoLog.Abs plus
-    in-framework assemblies. Serialization is PicoLog.Json's job — the sinks that serialize
-    (JsonLogSink, SeqSink) ship there, with PicoJetson.
+    Both reference kinds are in scope, because both become <dependency> entries. NuGet builds that
+    list from project.assets.json, so every ProjectReference declared here lands in the package
+    whether or not the referenced project is packable: measured here, a plain
+    `<ProjectReference Include="..\PicoLog.Gen\PicoLog.Gen.csproj" />` packed as
+    `<dependency id="PicoLog.Gen" version="0.0.0-dev" exclude="Build,Analyzers" />` while this
+    guard — which read only PackageReference — stayed green. That is the hole this target closes.
 
-    Only PackageReferences DECLARED IN THIS FILE count (%(DefiningProjectFullPath)), so the
-    inherited Microsoft.SourceLink.GitHub (Directory.Build.props), the SDK's own
-    Microsoft.DotNet.ILCompiler / Microsoft.NET.ILLink.Tasks injection
-    (Microsoft.NET.Sdk.FrameworkReferenceResolution.targets) and the ProjectReference used when
-    UseProjectReferences=true neither satisfy nor trip the guard. Both UseProjectReferences
-    branches validate: the ProjectReference branch has no PackageReference at all, the other has
-    the single allowed one, and an empty list is a pass.
+    (The PicoLog.Json shape needs two qualifiers. PicoLog.Json references PicoLog back, so restore
+    stops at MSB4006 "circular dependency" before any guard runs. With that back-reference removed
+    and PicoLog.dll already built, a no-build pack under the PackageReference-only guard still
+    succeeded and listed `<dependency id="PicoLog.Json" version="0.0.0-dev" exclude="Build,Analyzers" />`
+    plus the transitive `<dependency id="PicoJetson" version="2026.13.0" exclude="Build,Analyzers" />`.)
+
+    The allow-list is exactly PicoLog.Abs, in both kinds: core's entire dependency list is
+    PicoLog.Abs plus in-framework assemblies. Serialization is PicoLog.Json's job — the sinks that
+    serialize (JsonLogSink, SeqSink) ship there, with PicoJetson. Both UseProjectReferences
+    branches validate: project mode declares the one ProjectReference, package mode the one
+    PackageReference, and an empty list is a pass.
+
+    PrivateAssets is required on the allowed reference, and it is no loophole for a foreign one. On
+    the ProjectReference, "Build" (what this file uses) keeps PicoLog.Abs's build assets out of the
+    shipped dependency — PicoLog.Abs stays the one <dependency>, trimmed to
+    `include="Runtime,Compile,Native,ContentFiles,Analyzers,BuildTransitive"`. "All" is different:
+    it removes the <dependency> outright (measured the same way; it is how PicoLog.Abs hides its
+    own PicoLog.Gen generator reference, whose nuspec group comes out empty), so on a dependency
+    PicoLog.dll needs at run time it would ship an assembly consumers cannot load. A foreign id
+    therefore fails whatever its PrivateAssets says: "all" hides the dependency while core keeps
+    compiling against types no consumer receives.
+
+    The two kinds are pinned differently on purpose: the PackageReference must be exactly
+    "Build" (the value this file sets, and PicoLog.Abs is the only dependency that build
+    declares, so drift there is a packaging change), while the ProjectReference only has to be
+    non-empty and free of "all" — a different flow filter there is a build-graph decision, and
+    any value other than "all" keeps PicoLog.Abs in the nuspec.
+
+    Scope: the two reference kinds declared in THIS file (%(DefiningProjectFullPath)); references
+    injected by Directory.Build.props (SourceLink, ILCompiler, ILLink) are out of it.
+    NOT covered: those, <NuspecFile>, a dependency's buildTransitive targets, <Reference> to a vendored DLL.
 
     Timing: Build and GenerateNuspec. Restore never runs it, so a first-time restore is unaffected.
 
@@ -66,18 +93,59 @@
   -->
   <Target Name="PicoLogCoreDeclaresNoSerializer" BeforeTargets="Build;GenerateNuspec">
     <ItemGroup>
+      <!--
+        Only references DECLARED IN THIS FILE: the well-known DefiningProjectFullPath metadata is
+        matched against the project MSBuild was invoked on, so Directory.Build.props additions
+        (SourceLink, the SDK's ILCompiler / ILLink packages) are invisible to the guard.
+      -->
       <_PicoLogCoreOwnPackageReference
         Include="@(PackageReference)"
         Condition="'%(PackageReference.DefiningProjectFullPath)' == '$(MSBuildProjectFullPath)'"
+      />
+      <_PicoLogCoreOwnProjectReference
+        Include="@(ProjectReference)"
+        Condition="'%(ProjectReference.DefiningProjectFullPath)' == '$(MSBuildProjectFullPath)'"
+      />
+      <!-- A ProjectReference's Identity is a path, not a package id, so the allow-list match is
+           made on the referenced project's file name. -->
+      <_PicoLogCoreAllowedProjectReference
+        Include="@(_PicoLogCoreOwnProjectReference)"
+        Condition="$([System.IO.Path]::GetFileNameWithoutExtension('%(Identity)')) == 'PicoLog.Abs'"
       />
       <_PicoLogCoreForeignPackageReference
         Include="@(_PicoLogCoreOwnPackageReference)"
         Exclude="PicoLog.Abs"
       />
+      <_PicoLogCoreForeignProjectReference
+        Include="@(_PicoLogCoreOwnProjectReference)"
+        Exclude="@(_PicoLogCoreAllowedProjectReference)"
+      />
+      <!-- The allowed id, with the PrivateAssets that keeps its build assets out of the shipped
+           dependency. "all" is caught explicitly: it would drop the dependency instead. -->
+      <_PicoLogCoreUnpinnedPackageReference
+        Include="@(_PicoLogCoreOwnPackageReference)"
+        Condition="'%(Identity)' == 'PicoLog.Abs' and '%(_PicoLogCoreOwnPackageReference.PrivateAssets)' != 'Build'"
+      />
+      <_PicoLogCoreUnpinnedProjectReference
+        Include="@(_PicoLogCoreOwnProjectReference)"
+        Condition="$([System.IO.Path]::GetFileNameWithoutExtension('%(Identity)')) == 'PicoLog.Abs' and ('%(_PicoLogCoreOwnProjectReference.PrivateAssets)' == '' or $([System.String]::Copy('%(_PicoLogCoreOwnProjectReference.PrivateAssets)').ToLowerInvariant().Contains('all')))"
+      />
     </ItemGroup>
     <Error
       Condition="'@(_PicoLogCoreForeignPackageReference)' != ''"
       Text="PicoLog (core) may declare exactly one package dependency: PicoLog.Abs. Offending PackageReference(s): @(_PicoLogCoreForeignPackageReference, ', ').&#10;&#10;Serialization is PicoLog.Json's job: the sinks that serialize (JsonLogSink, SeqSink) ship in that package, together with PicoJetson. Core's entire dependency list is PicoLog.Abs plus in-framework assemblies — a package declared here is inherited by every consumer of PicoLog. If a sink needs it, that sink belongs in PicoLog.Json.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+    />
+    <Error
+      Condition="'@(_PicoLogCoreForeignProjectReference)' != ''"
+      Text="PicoLog (core) may reference exactly one project: PicoLog.Abs. Offending ProjectReference(s): @(_PicoLogCoreForeignProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;A ProjectReference declared in this file becomes a nuspec dependency of the packed PicoLog — one that every consumer of PicoLog then inherits. NuGet builds that list from project.assets.json, so a reference to a non-packable project is included too (measured here: a plain reference to PicoLog.Gen packed as a PicoLog.Gen dependency), and PrivateAssets=&quot;all&quot; only hides the dependency while core keeps compiling against project types that no consumer receives. Serialization is PicoLog.Json's job: the sinks that serialize (JsonLogSink, SeqSink) ship in that package, together with PicoJetson. If a sink needs it, that sink belongs in PicoLog.Json.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+    />
+    <Error
+      Condition="'@(_PicoLogCoreUnpinnedPackageReference)' != ''"
+      Text="PicoLog (core) may declare exactly one package dependency: PicoLog.Abs, and it must keep PrivateAssets=&quot;Build&quot;. Offending PackageReference(s): @(_PicoLogCoreUnpinnedPackageReference, ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; is what keeps PicoLog.Abs's build assets out of the shipped dependency; PrivateAssets=&quot;all&quot; would remove the dependency itself, and PicoLog.dll cannot be used without PicoLog.Abs.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+    />
+    <Error
+      Condition="'@(_PicoLogCoreUnpinnedProjectReference)' != ''"
+      Text="PicoLog (core)'s one allowed ProjectReference, PicoLog.Abs, must carry PrivateAssets and must not include &quot;all&quot;. Offending ProjectReference(s): @(_PicoLogCoreUnpinnedProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; (what this file uses) is what keeps PicoLog.Abs's build assets out of the shipped dependency. Without it the reference flows its assets to every consumer project; with &quot;all&quot; the dependency disappears from the nuspec altogether — and PicoLog.dll needs PicoLog.Abs at compile and run time, so consumers would receive an assembly they cannot load.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
     />
   </Target>
 </Project>
