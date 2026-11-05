@@ -9,9 +9,12 @@ Version, tag and baseline decisions come from `picohex-release`, not from anywhe
 - **The version rule.** `<year>.<x>.<y>`; `x` (and `y` → 0) when the public API changed, `y` alone
   when it did not. "API changed" includes additions. All packages share one version.
 - **`-DryRun` before anything else.** It prints the last release, the per-package delta with the
-  exact added and removed lines, and the next version. A removed line is a breaking change. In this
-  repository that dry run is the skill's tool under `scripts/api-surface/` — **not**
-  `scripts/release.ps1`, which has no `-DryRun` (see the table below).
+  exact added and removed lines, and the next version. A removed line is a breaking change.
+  `-DryRun` is a verb of the **skill script** (`picohex-release`'s own `scripts/release.ps1`) — not of
+  anything in this repository. `scripts/api-surface/` is a bare extractor with three verbs, `dump`
+  (one assembly → surface lines), `diff` (baseline vs current) and `next-version` (the version rule);
+  it has no dry run and walks nothing. This repo's `scripts/release.ps1` is the packer, and it has no
+  `-DryRun` either (see the table below).
 - **The documentation walk.** The printed delta is the list of every document that is now lying —
   READMEs, the wire description, and the `picohex-*` skills, which live outside this repository.
   `docs/release-notes/` and `AnalyzerReleases.Unshipped.md` are part of that walk.
@@ -45,10 +48,13 @@ this branch was cut from (`5f85fc2`).
   happens as part of applying the release, not before it.
 - Adding or removing a packable project changes the baseline set itself — that is a deliberate act,
   not a side effect of a build.
-- **Run the dry run and the apply step from a checkout with no live `.worktrees/*`.** The extractor
-  recurses the repository root for `*.csproj`, so a nested checkout under `.worktrees/` contributes a
-  second copy of every packable project and the tool stops with `duplicate PackageId across packable
-  projects`. Remove the worktree rather than working around it by copying the repository elsewhere.
+- **Run the dry run and the apply step from a checkout with no live `.worktrees/*`.** It is the skill
+  script's project discovery that recurses the repository root for `*.csproj`
+  (`Get-PackableProjects`), so a nested checkout under `.worktrees/` contributes a second copy of
+  every packable project and the script stops with `duplicate PackageId across packable projects`.
+  The extractor is not the walker — `dump` takes one assembly path, `diff` two files — so the caveat
+  belongs to the script, not to the tool. Remove the worktree rather than working around it by
+  copying the repository elsewhere.
 
 ## `main` is the only release branch
 
