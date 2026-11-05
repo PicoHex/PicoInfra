@@ -708,8 +708,12 @@ public sealed class LoggerFactoryTests
         // run. The last one outlives the 5 s SyncWriteTimeout the queued write is given, so the
         // write was dropped and the count below read 2 instead of 3. Nothing here asserts how long
         // anything took: the 300 ms window is a "must not happen yet" check and the 60 s one is a
-        // deadlock guard, both sampled on this thread against Stopwatch, so a loaded ThreadPool can
-        // neither stretch them nor end them early.
+        // deadlock guard. Both are sampled against Stopwatch, and the window is measured from the
+        // writer's own enqueue attempt (it publishes a timestamp right before the call) rather than
+        // from this thread: a window that opens before the writer is scheduled can expire before the
+        // write was ever tried, and that vacuity was measured — with capacity+1 injected and a 400 ms
+        // pre-sleep in the writer, the window-starts-here shape passed 8 runs out of 8 while the
+        // queue had room the whole time.
         var options = new LoggerFactoryOptions
         {
             QueueCapacity = 1,
@@ -721,6 +725,11 @@ public sealed class LoggerFactoryTests
         var logger = factory.CreateLogger("Tests.Category");
 
         Thread? thirdWriter = null;
+        // Carries the instant the writer is about to attempt its enqueue, published from the writer
+        // thread: the observation window below is measured from there and from nowhere else.
+        var thirdWriteAttempted = new TaskCompletionSource<long>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var thirdWriteReturned = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
@@ -738,6 +747,7 @@ public sealed class LoggerFactoryTests
             {
                 try
                 {
+                    thirdWriteAttempted.TrySetResult(Stopwatch.GetTimestamp());
                     logger.Info("third");
                 }
                 finally
@@ -751,12 +761,29 @@ public sealed class LoggerFactoryTests
             };
             thirdWriter.Start();
 
-            // Outcome assertion: a full Wait-mode queue must hold the writer. It cannot be admitted
-            // earlier than this check anyway — only the in-flight write can free the slot, and that
-            // write has not been released — so this states the back-pressure property as a fact
-            // instead of using a delay to let the situation arise.
             await Assert
-                .That(StaysIncomplete(thirdWriteReturned.Task, BlockedObservationWindow))
+                .That(await CompletesWithinAsync(thirdWriteAttempted.Task, SyncWriteDeadlockGuard))
+                .IsTrue()
+                .Because(
+                    "the third writer must reach its enqueue attempt; after "
+                        + $"{SyncWriteDeadlockGuard.TotalSeconds:0} s it had not even tried to write, "
+                        + "which is a stuck thread, not a slow one."
+                );
+
+            // Outcome assertion: a full Wait-mode queue must hold the writer. The window starts at
+            // the instant the writer published, immediately before its enqueue attempt, so it
+            // provably brackets that attempt: an admitted write has returned by the time the window
+            // closes, and a held one has not. A window started on this thread instead would be
+            // vacuous whenever the writer had not been scheduled yet — measured with capacity+1
+            // injected and a 400 ms pre-sleep in the writer, that shape passed 8 runs out of 8.
+            await Assert
+                .That(
+                    StaysIncomplete(
+                        thirdWriteReturned.Task,
+                        thirdWriteAttempted.Task.Result,
+                        BlockedObservationWindow
+                    )
+                )
                 .IsTrue()
                 .Because(
                     "a full Wait-mode queue must block a sync write, not admit it past capacity and"
@@ -791,9 +818,11 @@ public sealed class LoggerFactoryTests
 
     /// <summary>
     /// How long a sync write is observed before it may be admitted. Not a duration assertion: "has
-    /// not happened yet" can only be checked over a window, and this one is sampled on the calling
-    /// thread against a monotonic clock, so a starved ThreadPool can neither shorten the window nor
-    /// make the sample miss it.
+    /// not happened yet" can only be checked over a window. The window is sampled against a
+    /// monotonic clock and starts at the instant the writer publishes immediately before its
+    /// enqueue attempt, so it brackets that attempt even when the writer thread is scheduled late —
+    /// a starved ThreadPool can neither shorten the window, end it early, nor let it expire before
+    /// the write was tried.
     /// </summary>
     private static readonly TimeSpan BlockedObservationWindow = TimeSpan.FromMilliseconds(300);
 
@@ -803,10 +832,9 @@ public sealed class LoggerFactoryTests
     /// </summary>
     private static readonly TimeSpan SyncWriteDeadlockGuard = TimeSpan.FromSeconds(60);
 
-    private static bool StaysIncomplete(Task task, TimeSpan window)
+    private static bool StaysIncomplete(Task task, long sinceTimestamp, TimeSpan window)
     {
-        var startTimestamp = Stopwatch.GetTimestamp();
-        while (Stopwatch.GetElapsedTime(startTimestamp) < window)
+        while (Stopwatch.GetElapsedTime(sinceTimestamp) < window)
         {
             if (task.IsCompleted)
                 return false;
@@ -834,12 +862,6 @@ public sealed class LoggerFactoryTests
     public async Task Wait_Mode_SyncWrite_ReturnsPromptlyWhenShutdownStartsDuringBackoff()
     {
         // Regression test: TryEnqueueSyncWithWait used to ignore the channel's
-        // completed state and keep sleeping in its backoff loop until the full
-        // SyncWriteTimeout elapsed, because ChannelWriter.TryWrite returns
-        // false (rather than throwing ChannelClosedException) on a completed
-        // channel. Under concurrent shutdown this pinned ThreadPool workers
-        // for the full timeout each, intermittently tripping CI hang detection
-        // under coverage instrumentation on linux-x64.
         // completed state and keep sleeping in its backoff loop until the full
         // SyncWriteTimeout elapsed, because ChannelWriter.TryWrite returns
         // false (rather than throwing ChannelClosedException) on a completed
@@ -1404,11 +1426,26 @@ public sealed class LoggerFactoryTests
             await logger.InfoAsync("payload");
             await sink.WriteStarted;
 
+            // The one exact statement available here is a LOWER bound on when the cancellation may
+            // become visible: the drain gives the in-flight write a full ShutdownTimeout to finish,
+            // so the write cannot be cancelled before that budget elapsed. It still forbids the
+            // behaviour worth forbidding: with the drain's own deadline shortened to 5 ms — i.e.
+            // cancelled on the spot — the cancellation is observed after 21-25 ms, a twentieth of the
+            // budget, so this bound goes red. It is also the only shape that survives load:
+            // every scheduling effect (a late ThreadPool timer callback, a starved pool, a
+            // continuation that waits for a worker) moves the observation LATER, never earlier,
+            // whereas an upper bound read at this instant is a claim about this thread's own
+            // scheduling: it can be descheduled between the call below and the read for longer than
+            // the whole budget. The origin is taken immediately before the drain begins and the
+            // elapsed value is stamped where the cancellation is observed — inside the sink, on the
+            // pipeline's own thread — not here.
+            //
+            // The floor is measured, not assumed: a bare new CancellationTokenSource(500 ms) awaited
+            // on the pool cancelled at 500.7 ms at the earliest of 100 idle probes and 503.4 ms at
+            // the earliest of 100 probes under the induced load used for this suite, so a ThreadPool
+            // timer does not undercut its own due time and the bound holds at the floor.
+            sink.MeasuresCancellationFrom(Stopwatch.GetTimestamp());
             var disposeTask = factory.DisposeAsync().AsTask();
-
-            // No waiting: the drain gives the in-flight write a full ShutdownTimeout to
-            // finish, so it cannot be cancelled yet. This half of the assertion is exact.
-            await Assert.That(sink.ObservedCancellationCount).IsEqualTo(0);
 
             // The behaviour under test is the OUTCOME — the expired shutdown timeout cancels
             // the in-flight write instead of letting it complete — so that is what is asserted,
@@ -1419,7 +1456,7 @@ public sealed class LoggerFactoryTests
             // bound failed 1 run in 8 there, which is exactly CI run 41813752088 — 10 s timeout
             // on win-x64 while the same suite passed on linux-x64); and unbounded once every
             // pool thread is occupied, because a saturated pool never dispatches the timer
-            // callback at all. So the bound below is only a deadlock guard: a drain that never
+            // callback at all. So the drain bound below is only a deadlock guard: a drain that never
             // cancels the write never returns, so any finite bound catches it, and 60 s is ~6x
             // the worst drain measured under induced load.
             await Assert
@@ -1432,6 +1469,15 @@ public sealed class LoggerFactoryTests
                 );
 
             await Assert.That(sink.ObservedCancellationCount).IsEqualTo(1);
+            await Assert
+                .That(sink.ObservedCancellationDelay)
+                .IsGreaterThanOrEqualTo(options.ShutdownTimeout)
+                .Because(
+                    "the in-flight write may only be cancelled once the shutdown timeout expired; "
+                        + $"it was cancelled {sink.ObservedCancellationDelay.TotalMilliseconds:0} ms "
+                        + $"into a {options.ShutdownTimeout.TotalMilliseconds:0} ms budget, i.e. the "
+                        + "drain cancelled it on the spot instead of giving it the time it was granted."
+                );
             await Assert.That(sink.CompletedWriteCount).IsEqualTo(0);
             await Assert.That(sink.WrittenCount).IsEqualTo(1);
         }
@@ -1764,6 +1810,8 @@ public sealed class LoggerFactoryTests
         private int _writtenCount;
         private int _observedCancellationCount;
         private int _completedWriteCount;
+        private long _cancellationDeadlineOriginTimestamp;
+        private long _observedCancellationDelayTicks = -1;
 
         public IReadOnlyCollection<LogEntry> Entries => _entries.ToArray();
 
@@ -1774,6 +1822,28 @@ public sealed class LoggerFactoryTests
 
         /// <summary>Writes released without being cancelled — i.e. that got through.</summary>
         public int CompletedWriteCount => Volatile.Read(ref _completedWriteCount);
+
+        /// <summary>
+        /// Arms a <see cref="Stopwatch"/> origin that <see cref="ObservedCancellationDelay"/> is
+        /// measured from. Unarmed by default, because most callers only care that the write was
+        /// cancelled and not how long it survived.
+        /// </summary>
+        public void MeasuresCancellationFrom(long originTimestamp) =>
+            Volatile.Write(ref _cancellationDeadlineOriginTimestamp, originTimestamp);
+
+        /// <summary>
+        /// How long after the armed origin the cancellation <em>became visible</em>, stamped on the
+        /// thread that observes it rather than on the test thread. <see cref="TimeSpan.Zero"/> when
+        /// no origin was armed.
+        /// </summary>
+        public TimeSpan ObservedCancellationDelay
+        {
+            get
+            {
+                var ticks = Volatile.Read(ref _observedCancellationDelayTicks);
+                return ticks < 0 ? TimeSpan.Zero : new TimeSpan(ticks);
+            }
+        }
 
         public Task WriteStarted => _writeStarted.Task;
 
@@ -1790,6 +1860,13 @@ public sealed class LoggerFactoryTests
             }
             catch (OperationCanceledException)
             {
+                var originTimestamp = Volatile.Read(ref _cancellationDeadlineOriginTimestamp);
+                if (originTimestamp != 0)
+                {
+                    var elapsed = Stopwatch.GetElapsedTime(originTimestamp);
+                    Volatile.Write(ref _observedCancellationDelayTicks, elapsed.Ticks);
+                }
+
                 Interlocked.Increment(ref _observedCancellationCount);
                 throw;
             }
