@@ -22,6 +22,31 @@ the test that pins it. Each one ends with what a consumer must do, not with a su
   a document whose arrays you actually bind. A document whose arrays you do not bind keeps exactly
   the keys it has today.
 
+### PicoCfg — TOML and YAML are parsed by their format's reader
+
+- **Breaking (behaviour).** The text backends used to carry a hand-written line splitter each
+  (60 / 52 / 36 lines for YAML / TOML / INI) while declaring a dependency on `PicoYaml` / `PicoToml`
+  / `PicoIni` they never called. TOML and YAML now read through `TomlReader` / `YamlReader`, so a
+  document **flattens differently with nothing to recompile**: sequences and value arrays become
+  arrays instead of vanishing or arriving as their own source text (a `- a` line had no `:` to
+  split on, `ports = [1, 2, 3]` was the literal string `"[1, 2, 3]"`), a block scalar is read as one
+  value instead of leaving `Script` holding the `|` indicator, `[[servers]]` indexes rows as
+  `servers:0:name` instead of one `[servers]:name` key silently overwritten by every row but the
+  last, and a table written after `[[s]]` keeps its own keys instead of landing under `s:0:`. An
+  array reaches the key space only under `flattenArrays: true` — the flag this release adds, in the
+  section above — which is why those signatures moved in the same release. `PicoCfg.Ini` reads
+  through `IniReader` too, and its key space is deliberately unchanged: INI has no arrays. —
+  `edf2cfd`, then `79b3283` (a value array inside `[[table]]` lost its elements and published the
+  **previous** key's value, and a `flattenArrays: false` YAML sequence still leaked its mappings'
+  continuation fields) and `660bb30` (the PicoSerDe 2026.12.1 bump that makes a YAML sequence open
+  an array frame at all).
+- **What to do.** Nothing fails to compile, so nothing points at you: re-read what a document
+  resolves to, because a value or a key path that moved is silent. A workaround for the old splitter
+  (a block-scalar body read as the indicator character, `ports` holding the previous key's value,
+  `[[table]]` rows under `s:0:`, arrays as literal text) is now wrong — delete it. A key that never
+  came from an array keeps the value it has today, and `GetAll()` on the documents you actually bind
+  is the honest check.
+
 ### PicoLog — `SeqSink` moved from `PicoLog` to `PicoLog.Json`
 
 - **Breaking (binary).** `PicoLog.SeqSink` now ships in the **`PicoLog.Json`** package, not in
