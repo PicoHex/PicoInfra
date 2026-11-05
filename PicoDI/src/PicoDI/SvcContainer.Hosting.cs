@@ -549,8 +549,12 @@ public sealed partial class SvcContainer
     /// A <see cref="CancellationTokenSource"/> only signals: handing its token to a service that
     /// ignores it bounds nothing, which is what made <see cref="HostedSvcStopTimeout"/> a claim
     /// rather than a bound (review-2026-11-02 defect L5). Awaiting through
-    /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline;
-    /// the abandoned phase is reported as a <see cref="TimeoutException"/> and the pass keeps
+    /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline —
+    /// barring a starved pool: it is a <see cref="CancellationTokenSource"/> timer, and both the
+    /// timer callback and the continuation that ends the wait are <see cref="ThreadPool"/> work, so
+    /// under total starvation neither can be scheduled and the wait ends whenever a worker frees up
+    /// instead, not at the deadline (recorded in <c>docs/release-notes/v2026.11.0.md</c>); the
+    /// abandoned phase is reported as a <see cref="TimeoutException"/> and the pass keeps
     /// going with its remaining services, so a hung service cannot hold a disposal or a rollback.
     /// The budget belongs to one service, so "the pass keeps going" includes the services behind
     /// the hung one instead of starving them (review-2026-11-02 Medium 2). A phase whose budget had
