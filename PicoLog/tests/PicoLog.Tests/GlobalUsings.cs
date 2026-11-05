@@ -7,6 +7,7 @@ global using System.Net;
 global using System.Runtime.CompilerServices;
 global using System.Text;
 global using System.Text.Json;
+global using System.Xml.Linq;
 global using Microsoft.CodeAnalysis;
 global using Microsoft.CodeAnalysis.CSharp;
 global using PicoDI;
