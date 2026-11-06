@@ -6,8 +6,22 @@ public sealed class FlushQuiesceCoordinatorTests
     public async Task EnterWriteOperationSync_Enters_WhenNoFlush()
     {
         var c = new FlushQuiesceCoordinator();
-        c.EnterWriteOperationSync(TimeSpan.FromSeconds(1));
-        c.ExitWriteOperation();
+
+        // With no flush pending, entry must not consult the timeout at all: it takes the write
+        // operation and returns. TimeSpan.Zero is the sharpest form of that claim — the sibling
+        // EnterWriteOperationSync_TimesOut_WhenFlushPending test calls the same method with a
+        // flush pending and gets a TimeoutException, so a zero timeout here passing can only mean
+        // the flush-pending branch was not entered.
+        c.EnterWriteOperationSync(TimeSpan.Zero);
+
+        try
+        {
+            await Assert.That(c.HasActiveWriteOperations()).IsTrue();
+        }
+        finally
+        {
+            c.ExitWriteOperation();
+        }
     }
 
     [Test]
