@@ -24,6 +24,13 @@ public sealed class CorePackageGuardTests
     private const string GuardTargetName = "PicoLogCoreDeclaresNoSerializer";
     private const string AllowedId = "PicoLog.Abs";
 
+    /// <summary>
+    /// The one allowed ProjectReference, as a normalized path relative to the core project's
+    /// own directory - the same thing the guard compares after NormalizePath, rather than the
+    /// file name (which accepted ANY PicoLog.Abs.csproj anywhere in the tree).
+    /// </summary>
+    private const string AllowedProjectPath = "../PicoLog.Abs/PicoLog.Abs.csproj";
+
     [Test]
     public async Task CoreProject_StillDeclaresTheNoSerializerGuardBeforeBuildAndPack()
     {
@@ -73,12 +80,29 @@ public sealed class CorePackageGuardTests
         var violations = new List<string>();
         foreach (var reference in declared)
         {
-            if (!string.Equals(reference.Id, AllowedId, StringComparison.OrdinalIgnoreCase))
+            // A PackageReference is identified by its package id; a ProjectReference by the
+            // referenced project's PATH, matching how the guard tells the two apart.
+            var isAllowed =
+                reference.Kind == "PackageReference"
+                    ? string.Equals(reference.Id, AllowedId, StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(
+                        reference.Id,
+                        AllowedProjectPath,
+                        StringComparison.OrdinalIgnoreCase
+                    );
+            if (!isAllowed)
             {
+                var allowed =
+                    reference.Kind == "PackageReference"
+                        ? AllowedId
+                        : $"the project {AllowedProjectPath}";
                 violations.Add(
-                    $"{reference.Kind} '{reference.Id}': the only allowed id is {AllowedId}. It"
-                        + " becomes a nuspec dependency of PicoLog that every consumer of PicoLog"
-                        + " inherits; serialization belongs to PicoLog.Json."
+                    $"{reference.Kind} '{reference.Id}': the only allowed reference is {allowed}."
+                        + " It becomes a nuspec dependency of PicoLog that every consumer of"
+                        + " PicoLog inherits; serialization belongs to PicoLog.Json. A"
+                        + " ProjectReference is matched on its path, not its file name: another"
+                        + " project that happens to be called PicoLog.Abs.csproj is a different"
+                        + " project."
                 );
             }
             else if (string.IsNullOrWhiteSpace(reference.PrivateAssets))
@@ -125,17 +149,37 @@ public sealed class CorePackageGuardTests
     }
 
     /// <summary>
-    /// The referenced project's file name without its extension. Both separators are stripped by
-    /// hand: the includes are written Windows-style (<c>..\PicoLog.Abs\PicoLog.Abs.csproj</c>), and
-    /// <see cref="Path.GetFileNameWithoutExtension(string)"/> honours only the host's separator, so
-    /// on the Linux and macOS CI legs it would hand back the whole path and fail this test for the
-    /// wrong reason.
+    /// A ProjectReference Include, normalized lexically to a '/'-separated path with "." and ".."
+    /// resolved — no filesystem access and no host separator dependence, so the verdict is the
+    /// same on the Windows and the Linux/macOS CI legs. The includes are written Windows-style
+    /// (<c>..\PicoLog.Abs\PicoLog.Abs.csproj</c>) and a forward-slash split must see them.
     /// </summary>
-    private static string ProjectFileStem(string include)
+    private static string NormalizeRelativeProjectPath(string include)
     {
-        var separator = include.LastIndexOfAny(['/', '\\']);
-        var fileName = separator >= 0 ? include[(separator + 1)..] : include;
-        return Path.GetFileNameWithoutExtension(fileName);
+        var segments = new List<string>();
+        foreach (
+            var segment in include
+                .Replace('\\', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+        )
+        {
+            if (segment == ".")
+                continue;
+
+            if (segment == "..")
+            {
+                if (segments.Count > 0 && segments[^1] != "..")
+                    segments.RemoveAt(segments.Count - 1);
+                else
+                    segments.Add("..");
+
+                continue;
+            }
+
+            segments.Add(segment);
+        }
+
+        return string.Join('/', segments);
     }
 
     private static string Describe(IReadOnlyList<DeclaredReference> references) =>
@@ -189,8 +233,11 @@ public sealed class CorePackageGuardTests
                 continue;
 
             // A ProjectReference's Include is a path, a PackageReference's Include is the package
-            // id; the guard compares the referenced project's file name, and so does this.
-            var id = kind == "PackageReference" ? include.Trim() : ProjectFileStem(include.Trim());
+            // id; the guard matches the referenced project's PATH, and so does this.
+            var id =
+                kind == "PackageReference"
+                    ? include.Trim()
+                    : NormalizeRelativeProjectPath(include.Trim());
 
             references.Add(
                 new DeclaredReference(
