@@ -1,3 +1,4 @@
+B:PicoCfg.Abs.CfgKeyCollisionException : System.InvalidOperationException
 I:PicoCfg.Abs.CfgSection : PicoCfg.Abs.ICfg
 I:PicoCfg.Abs.CfgSection : PicoCfg.Abs.ICfgSection
 I:PicoCfg.Abs.ICfgProvider : System.IAsyncDisposable
@@ -15,11 +16,16 @@ M:PicoCfg.Abs.ICfgRoot.ReloadAsync(System.Threading.CancellationToken ct = null)
 M:PicoCfg.Abs.ICfgRoot.WaitForChangeAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask abstract
 M:PicoCfg.Abs.ICfgSnapshot.GetAllValues() : System.Collections.Generic.IReadOnlyDictionary`2<string, string> abstract
 M:PicoCfg.Abs.ICfgSource.OpenAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask`1<PicoCfg.Abs.ICfgProvider> abstract
+P:PicoCfg.Abs.CfgKeyCollisionException.ExistingPosition : string { get; }
+P:PicoCfg.Abs.CfgKeyCollisionException.Format : string { get; }
+P:PicoCfg.Abs.CfgKeyCollisionException.IncomingPosition : string { get; }
+P:PicoCfg.Abs.CfgKeyCollisionException.Key : string { get; }
 P:PicoCfg.Abs.CfgSection.Parent : PicoCfg.Abs.ICfg { get; }
 P:PicoCfg.Abs.CfgSection.Path : string { get; }
 P:PicoCfg.Abs.ICfgOptions`1.Value : T { get; }
 P:PicoCfg.Abs.ICfgProvider.Snapshot : PicoCfg.Abs.ICfgSnapshot { get; }
 P:PicoCfg.Abs.ICfgSection.Path : string { get; }
+T:class PicoCfg.Abs.CfgKeyCollisionException
 T:class PicoCfg.Abs.CfgSection
 T:class PicoCfg.Abs.CfgSectionExtensions
 T:class PicoCfg.Abs.CfgSnapshotExtensions

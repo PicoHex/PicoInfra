@@ -1,3 +1,3 @@
-M:PicoCfg.Toml.CfgBuilderTomlExtensions.AddToml(PicoCfg.CfgBuilder builder, string toml) : PicoCfg.CfgBuilder static
-M:PicoCfg.Toml.CfgBuilderTomlExtensions.AddTomlFile(PicoCfg.CfgBuilder builder, string path) : PicoCfg.CfgBuilder static
+M:PicoCfg.Toml.CfgBuilderTomlExtensions.AddToml(PicoCfg.CfgBuilder builder, string toml, bool flattenArrays = false) : PicoCfg.CfgBuilder static
+M:PicoCfg.Toml.CfgBuilderTomlExtensions.AddTomlFile(PicoCfg.CfgBuilder builder, string path, bool flattenArrays = false) : PicoCfg.CfgBuilder static
 T:class PicoCfg.Toml.CfgBuilderTomlExtensions

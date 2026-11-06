@@ -1,8 +1,20 @@
 I:PicoLog.Json.JsonLogSink : PicoLog.Abs.IFlushableLogSink
 I:PicoLog.Json.JsonLogSink : PicoLog.Abs.ILogSink
 I:PicoLog.Json.JsonLogSink : System.IAsyncDisposable
+I:PicoLog.SeqSink : PicoLog.Abs.IBatchingLogSink
+I:PicoLog.SeqSink : PicoLog.Abs.IFlushableLogSink
+I:PicoLog.SeqSink : PicoLog.Abs.ILogSink
+I:PicoLog.SeqSink : System.IAsyncDisposable
 M:PicoLog.Json.JsonLogSink..ctor(string filePath) : void
 M:PicoLog.Json.JsonLogSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
 M:PicoLog.Json.JsonLogSink.FlushAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
 M:PicoLog.Json.JsonLogSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.Task override
+M:PicoLog.SeqSink..ctor(System.Net.Http.HttpClient httpClient, string apiKey = null, System.Nullable`1<System.TimeSpan> flushInterval = null, bool enableConsoleFallback = false, int maxRetries = 3, int retryBaseDelayMs = 100) : void
+M:PicoLog.SeqSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
+M:PicoLog.SeqSink.FlushAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.SeqSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.Task override
+M:PicoLog.SeqSink.WriteBatchAsync(System.Collections.Generic.IReadOnlyList`1<PicoLog.Abs.LogEntry> batch, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+P:PicoLog.SeqSink.FailureCount : long { get; }
+P:PicoLog.SeqSink.LastFailureTime : System.Nullable`1<System.DateTimeOffset> { get; }
 T:class PicoLog.Json.JsonLogSink
+T:class PicoLog.SeqSink

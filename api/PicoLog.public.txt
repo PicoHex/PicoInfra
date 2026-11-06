@@ -26,10 +26,6 @@ I:PicoLog.LoggerFactory : PicoLog.Abs.ILoggerFactory
 I:PicoLog.LoggerFactory : System.IAsyncDisposable
 I:PicoLog.Logger`1 : PicoLog.Abs.ILogger
 I:PicoLog.Logger`1 : PicoLog.Abs.ILogger`1<TCategory>
-I:PicoLog.SeqSink : PicoLog.Abs.IBatchingLogSink
-I:PicoLog.SeqSink : PicoLog.Abs.IFlushableLogSink
-I:PicoLog.SeqSink : PicoLog.Abs.ILogSink
-I:PicoLog.SeqSink : System.IAsyncDisposable
 M:PicoLog.ColoredConsoleSink..ctor(PicoLog.Abs.ILogFormatter formatter, System.IO.TextWriter writer = null) : void
 M:PicoLog.ColoredConsoleSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
 M:PicoLog.ColoredConsoleSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken cancellationToken = null) : System.Threading.Tasks.Task override
@@ -62,11 +58,7 @@ M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId e
 M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, PicoLog.Abs.EventId eventId, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
 M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, System.FormattableString message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
 M:PicoLog.Logger`1.LogAsync(PicoLog.Abs.LogLevel logLevel, string message, System.Collections.Generic.IReadOnlyList`1<System.Collections.Generic.KeyValuePair`2<string, object>> properties, System.Exception exception, System.Threading.CancellationToken cancellationToken) : System.Threading.Tasks.Task override
-M:PicoLog.SeqSink..ctor(System.Net.Http.HttpClient httpClient, string apiKey = null, System.Nullable`1<System.TimeSpan> flushInterval = null, bool enableConsoleFallback = false, int maxRetries = 3, int retryBaseDelayMs = 100) : void
-M:PicoLog.SeqSink.DisposeAsync() : System.Threading.Tasks.ValueTask override
-M:PicoLog.SeqSink.FlushAsync(System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
-M:PicoLog.SeqSink.WriteAsync(PicoLog.Abs.LogEntry entry, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.Task override
-M:PicoLog.SeqSink.WriteBatchAsync(System.Collections.Generic.IReadOnlyList`1<PicoLog.Abs.LogEntry> batch, System.Threading.CancellationToken ct = null) : System.Threading.Tasks.ValueTask override
+M:PicoLog.PicoLogMetrics.RecordRejectedAfterShutdown() : void static
 P:PicoLog.FileSinkOptions.AllowFlushInterrupt : bool { get; set; }
 P:PicoLog.FileSinkOptions.BatchSize : int { get; set; }
 P:PicoLog.FileSinkOptions.FilePath : string { get; set; }
@@ -87,8 +79,6 @@ P:PicoLog.LoggerFactoryOptions.QueueFullMode : PicoLog.LogQueueFullMode { get; s
 P:PicoLog.LoggerFactoryOptions.ShutdownTimeout : System.TimeSpan { get; set; }
 P:PicoLog.LoggerFactoryOptions.SyncWriteTimeout : System.TimeSpan { get; set; }
 P:PicoLog.LoggerFactoryOptions.TimestampProvider : System.TimeProvider { get; set; }
-P:PicoLog.SeqSink.FailureCount : long { get; }
-P:PicoLog.SeqSink.LastFailureTime : System.Nullable`1<System.DateTimeOffset> { get; }
 T:class PicoLog.ColoredConsoleSink
 T:class PicoLog.ConsoleFormatter
 T:class PicoLog.ConsoleSink
@@ -99,5 +89,4 @@ T:class PicoLog.LoggerFactory
 T:class PicoLog.LoggerFactoryOptions
 T:class PicoLog.Logger`1
 T:class PicoLog.PicoLogMetrics
-T:class PicoLog.SeqSink
 T:enum PicoLog.LogQueueFullMode

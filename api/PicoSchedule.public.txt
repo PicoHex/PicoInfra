@@ -41,6 +41,7 @@ P:PicoSchedule.ScheduleLogEntry.AtUtc : System.DateTimeOffset { get; init; }
 P:PicoSchedule.ScheduleLogEntry.JobId : System.Guid { get; init; }
 P:PicoSchedule.ScheduleLogEntry.Level : string { get; init; }
 P:PicoSchedule.ScheduleLogEntry.Message : string { get; init; }
+P:PicoSchedule.Scheduler.IsRunning : bool { get; }
 P:PicoSchedule.Scheduler.Snapshot : System.Collections.Generic.IReadOnlyList`1<PicoSchedule.JobSnapshot> { get; }
 P:PicoSchedule.SchedulerOptions.BurstLimit : int { get; init; }
 P:PicoSchedule.SchedulerOptions.Clock : PicoSchedule.ITimeProvider { get; init; }
