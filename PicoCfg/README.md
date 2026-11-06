@@ -261,5 +261,9 @@ container.RegisterCfgOptionsScoped<AppSettings>();     // ICfgOptions<T> snapsho
 | **PicoCfg.Abs** | `ICfg`, `ICfgRoot`, `ICfgSection`, `ICfgOptions<T>` |
 | **PicoCfg.Gen** | `CfgBind.Bind<T>` source generator (embedded in `PicoCfg.Abs`) |
 | **PicoCfg.DI** | DI integration |
+| **PicoCfg.Json** | JSON configuration source (via PicoJetson) |
+| **PicoCfg.Yaml** | YAML configuration source (via PicoYaml) |
+| **PicoCfg.Ini** | INI configuration source (via PicoIni) |
+| **PicoCfg.Toml** | TOML configuration source (via PicoToml) |
 
 [← Back to PicoInfra](../README.md)
