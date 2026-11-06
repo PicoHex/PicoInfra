@@ -2115,6 +2115,28 @@ public sealed class LoggerFactoryTests
         await Assert.That(values!.All(value => value >= minimumValue)).IsTrue();
     }
 
+    /// <summary>
+    /// How long an observable instrument is <em>sampled</em>. This is the "keep sampling while the
+    /// value is still on its way" window, not an assertion about how long the pipeline takes and
+    /// not a duration budget: it may expire because the observation genuinely never appears, and it
+    /// deliberately must not expire merely because the machine is slow to run the sampling loop.
+    /// </summary>
+    /// <remarks>
+    /// Measurement is <b>polled</b>, not pushed: an <c>ObservableGauge</c> has no callback to wait
+    /// on, so the test itself has to call <c>MeterListener.RecordObservableInstruments()</c> and the
+    /// runtime invokes the gauge's observation callback then. There is therefore no signal to await
+    /// and sampling is the only way to see the value; what must not be a <em>budget</em> is the
+    /// attempt count. A count is a wall-clock budget in disguise, and that budget is a function of
+    /// how often the pool schedules the <c>Task.Delay</c> continuation, i.e. of the machine, not of
+    /// the pipeline under test: with the whole suite in parallel on a 4-processor view, a nominal
+    /// <c>Task.Delay(10)</c> was measured here at a 15.6 ms median, 32.7 ms p99 and a 185.6 ms
+    /// worst case, so a fixed 100-sample loop covers anywhere from ~1 s to tens of seconds of real
+    /// time depending on load. A monotone deadline checked against <see cref="Stopwatch"/> instead
+    /// spends a fixed amount of <em>time</em> regardless of scheduling, so a late sample cannot
+    /// quietly shorten it.
+    /// </remarks>
+    private static readonly TimeSpan ObservableMeasurementSampleWindow = TimeSpan.FromSeconds(60);
+
     private static async Task RecordObservableMeasurementUntilAsync(
         MeterListener listener,
         ConcurrentDictionary<string, ConcurrentQueue<double>> measurements,
@@ -2122,18 +2144,44 @@ public sealed class LoggerFactoryTests
         Func<double, bool> predicate
     )
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (
+            var startedAt = Stopwatch.GetTimestamp();
+            Stopwatch.GetElapsedTime(startedAt) < ObservableMeasurementSampleWindow;
+            await Task.Delay(10)
+        )
         {
             listener.RecordObservableInstruments();
 
             if (measurements.TryGetValue(instrumentName, out var values) && values.Any(predicate))
                 return;
+        }
 
-            await Task.Delay(10);
+        // A satisfying sample can land between the loop's final check and the deadline, so the
+        // deadline is re-checked before failing: the guard fires only when the value is genuinely
+        // still absent, never because the loop happened to stop one sample short of it.
+        listener.RecordObservableInstruments();
+        if (
+            measurements.TryGetValue(instrumentName, out var finalValues)
+            && finalValues.Any(predicate)
+        )
+            return;
+
+        var observed = "nothing (the instrument was never observed)";
+        if (finalValues is { Count: > 0 })
+        {
+            // Sampled every few ms, so the tail is the informative part; the count keeps the whole
+            // history legible without printing all of it.
+            var tail = finalValues.TakeLast(5).ToArray();
+            observed =
+                $"[{string.Join(", ", tail)}]" + $", {finalValues.Count} sample(s) in the window";
         }
 
         throw new InvalidOperationException(
-            $"Did not observe expected measurement for '{instrumentName}' within the sampling window."
+            $"Did not observe a measurement satisfying the expected predicate for '{instrumentName}' "
+                + $"within the {ObservableMeasurementSampleWindow.TotalSeconds:0} s sampling guard. "
+                + $"The last sample of '{instrumentName}' was {observed}. That guard is a deadlock "
+                + "bound, not a latency budget: a value that still does not satisfy the predicate at "
+                + "that point is a stuck pipeline, not a slow machine."
         );
     }
 
