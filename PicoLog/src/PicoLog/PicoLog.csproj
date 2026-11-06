@@ -66,11 +66,31 @@
     therefore fails whatever its PrivateAssets says: "all" hides the dependency while core keeps
     compiling against types no consumer receives.
 
-    The two kinds are pinned differently on purpose: the PackageReference must be exactly
-    "Build" (the value this file sets, and PicoLog.Abs is the only dependency that build
-    declares, so drift there is a packaging change), while the ProjectReference only has to be
-    non-empty and free of "all" — a different flow filter there is a build-graph decision, and
-    any value other than "all" keeps PicoLog.Abs in the nuspec.
+    The two kinds are pinned differently on purpose: the PackageReference must be "Build" (the
+    value this file sets, and PicoLog.Abs is the only dependency that build declares, so drift
+    there is a packaging change), while the ProjectReference only has to be non-empty and free of
+    "all" — a different flow filter there is a build-graph decision, and any value other than
+    "all" keeps PicoLog.Abs in the nuspec.
+
+    CASE DOES NOT MATTER on either comparison, and that is deliberate, not an accident of
+    MSBuild's `!=`. Measured twice here. (a) MSBuild's own string comparison is case-insensitive:
+    in a .proj, `Condition="'build' != 'Build'"` fires no error — so the earlier check already
+    accepted `PrivateAssets="build"`. (b) NuGet agrees: packing this file with
+    `PrivateAssets="build"` on the ProjectReference produced a dependency group identical (empty
+    diff) to the `"Build"` one — the single `<dependency id="PicoLog.Abs" ... include=`
+    `"Runtime,Compile,Native,ContentFiles,Analyzers,BuildTransitive" />`. Rejecting `build` would
+    fail a package identical to the accepted one, so the check stays case-insensitive; it is now
+    an explicit OrdinalIgnoreCase comparison, so the behaviour is stated rather than inherited
+    from a comparison operator's default, and the messages say so.
+
+    The allow-list is matched on the PATH, not the file name. It used to test
+    `GetFileNameWithoutExtension(...) == 'PicoLog.Abs'`, which accepted ANY PicoLog.Abs.csproj
+    anywhere in the tree (a different project whose id is whatever it declares) while the message
+    still claimed "exactly one project". The expected path is ..\PicoLog.Abs\PicoLog.Abs.csproj
+    relative to this file; both sides go through NormalizePath and are compared case-insensitively,
+    so the verdict does not flip between the Windows and the Linux/macOS CI legs. It does not
+    survive a rename of the referenced project, which is intended: the dependency id and the
+    packaging flow come from that project.
 
     Scope: the two reference kinds declared in THIS file (%(DefiningProjectFullPath)); references
     injected by Directory.Build.props (SourceLink, ILCompiler, ILLink) are out of it.
@@ -92,6 +112,9 @@
     guard then fires at Build, before nuspec generation is even reached.
   -->
   <Target Name="PicoLogCoreDeclaresNoSerializer" BeforeTargets="Build;GenerateNuspec">
+    <PropertyGroup>
+      <_PicoLogCoreAllowedProjectPath>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '..', 'PicoLog.Abs', 'PicoLog.Abs.csproj').ToLowerInvariant())</_PicoLogCoreAllowedProjectPath>
+    </PropertyGroup>
     <ItemGroup>
       <!--
         Only references DECLARED IN THIS FILE: the well-known DefiningProjectFullPath metadata is
@@ -106,11 +129,13 @@
         Include="@(ProjectReference)"
         Condition="'%(ProjectReference.DefiningProjectFullPath)' == '$(MSBuildProjectFullPath)'"
       />
-      <!-- A ProjectReference's Identity is a path, not a package id, so the allow-list match is
-           made on the referenced project's file name. -->
+      <!-- The one allowed project, by PATH. A ProjectReference's Identity is a path; the file
+           name alone accepted any PicoLog.Abs.csproj anywhere in the tree. Both sides are
+           normalized (either separator, "." and ".." included) and lowercased, so they compare
+           with `==` and keep the "@(x) is empty" idiom of the error conditions below. -->
       <_PicoLogCoreAllowedProjectReference
         Include="@(_PicoLogCoreOwnProjectReference)"
-        Condition="$([System.IO.Path]::GetFileNameWithoutExtension('%(Identity)')) == 'PicoLog.Abs'"
+        Condition="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '%(Identity)').ToLowerInvariant()) == '$(_PicoLogCoreAllowedProjectPath)'"
       />
       <_PicoLogCoreForeignPackageReference
         Include="@(_PicoLogCoreOwnPackageReference)"
@@ -124,11 +149,11 @@
            dependency. "all" is caught explicitly: it would drop the dependency instead. -->
       <_PicoLogCoreUnpinnedPackageReference
         Include="@(_PicoLogCoreOwnPackageReference)"
-        Condition="'%(Identity)' == 'PicoLog.Abs' and '%(_PicoLogCoreOwnPackageReference.PrivateAssets)' != 'Build'"
+        Condition="'%(Identity)' == 'PicoLog.Abs' and !$([System.String]::Equals('%(_PicoLogCoreOwnPackageReference.PrivateAssets)', 'Build', System.StringComparison.OrdinalIgnoreCase))"
       />
       <_PicoLogCoreUnpinnedProjectReference
         Include="@(_PicoLogCoreOwnProjectReference)"
-        Condition="$([System.IO.Path]::GetFileNameWithoutExtension('%(Identity)')) == 'PicoLog.Abs' and ('%(_PicoLogCoreOwnProjectReference.PrivateAssets)' == '' or $([System.String]::Copy('%(_PicoLogCoreOwnProjectReference.PrivateAssets)').ToLowerInvariant().Contains('all')))"
+        Condition="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '%(Identity)').ToLowerInvariant()) == '$(_PicoLogCoreAllowedProjectPath)' and ('%(_PicoLogCoreOwnProjectReference.PrivateAssets)' == '' or $([System.String]::Copy('%(_PicoLogCoreOwnProjectReference.PrivateAssets)').ToLowerInvariant().Contains('all')))"
       />
     </ItemGroup>
     <Error
@@ -137,15 +162,15 @@
     />
     <Error
       Condition="'@(_PicoLogCoreForeignProjectReference)' != ''"
-      Text="PicoLog (core) may reference exactly one project: PicoLog.Abs. Offending ProjectReference(s): @(_PicoLogCoreForeignProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;A ProjectReference declared in this file becomes a nuspec dependency of the packed PicoLog — one that every consumer of PicoLog then inherits. NuGet builds that list from project.assets.json, so a reference to a non-packable project is included too (measured here: a plain reference to PicoLog.Gen packed as a PicoLog.Gen dependency), and PrivateAssets=&quot;all&quot; only hides the dependency while core keeps compiling against project types that no consumer receives. Serialization is PicoLog.Json's job: the sinks that serialize (JsonLogSink, SeqSink) ship in that package, together with PicoJetson. If a sink needs it, that sink belongs in PicoLog.Json.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+      Text="PicoLog (core) may reference exactly one project: PicoLog.Abs, and it must be the one this file declares (..\PicoLog.Abs\PicoLog.Abs.csproj). Offending ProjectReference(s): @(_PicoLogCoreForeignProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;The allow-list is that exact project path, not the file name PicoLog.Abs.csproj: any other project that happens to be called PicoLog.Abs.csproj is a different project with its own id and packaging flow, and the dependency a ProjectReference here produces comes from the referenced project.&#10;&#10;A ProjectReference declared in this file becomes a nuspec dependency of the packed PicoLog — one that every consumer of PicoLog then inherits. NuGet builds that list from project.assets.json, so a reference to a non-packable project is included too (measured here: a plain reference to PicoLog.Gen packed as a PicoLog.Gen dependency), and PrivateAssets=&quot;all&quot; only hides the dependency while core keeps compiling against project types that no consumer receives. Serialization is PicoLog.Json's job: the sinks that serialize (JsonLogSink, SeqSink) ship in that package, together with PicoJetson. If a sink needs it, that sink belongs in PicoLog.Json.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
     />
     <Error
       Condition="'@(_PicoLogCoreUnpinnedPackageReference)' != ''"
-      Text="PicoLog (core) may declare exactly one package dependency: PicoLog.Abs, and it must keep PrivateAssets=&quot;Build&quot;. Offending PackageReference(s): @(_PicoLogCoreUnpinnedPackageReference, ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; is what keeps PicoLog.Abs's build assets out of the shipped dependency; PrivateAssets=&quot;all&quot; would remove the dependency itself, and PicoLog.dll cannot be used without PicoLog.Abs.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+      Text="PicoLog (core) may declare exactly one package dependency: PicoLog.Abs, and it must carry PrivateAssets=&quot;Build&quot;. Case does not matter: MSBuild and NuGet both treat &quot;build&quot; and &quot;Build&quot; identically (measured — packing with PrivateAssets=&quot;build&quot; yields the same nuspec dependency group as &quot;Build&quot;), so &quot;build&quot; and &quot;BUILD&quot; pass. What fails is an empty PrivateAssets, &quot;all&quot;, or any other value: this dependency is pinned to &quot;Build&quot; and nothing wider, so even the explicit flow list Build,BuildTransitive,BuildMultitargeting is rejected as drift. Offending PackageReference(s): @(_PicoLogCoreUnpinnedPackageReference, ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; is what keeps PicoLog.Abs's build assets out of the shipped dependency; PrivateAssets=&quot;all&quot; would remove the dependency itself, and PicoLog.dll cannot be used without PicoLog.Abs.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
     />
     <Error
       Condition="'@(_PicoLogCoreUnpinnedProjectReference)' != ''"
-      Text="PicoLog (core)'s one allowed ProjectReference, PicoLog.Abs, must carry PrivateAssets and must not include &quot;all&quot;. Offending ProjectReference(s): @(_PicoLogCoreUnpinnedProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; (what this file uses) is what keeps PicoLog.Abs's build assets out of the shipped dependency. Without it the reference flows its assets to every consumer project; with &quot;all&quot; the dependency disappears from the nuspec altogether — and PicoLog.dll needs PicoLog.Abs at compile and run time, so consumers would receive an assembly they cannot load.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
+      Text="PicoLog (core)'s one allowed ProjectReference — the project this file names, ..\PicoLog.Abs\PicoLog.Abs.csproj — must carry PrivateAssets and must not include &quot;all&quot;. Offending ProjectReference(s): @(_PicoLogCoreUnpinnedProjectReference->'%(Identity) [PrivateAssets=%(PrivateAssets)]', ', ').&#10;&#10;PrivateAssets=&quot;Build&quot; (what this file uses) is what keeps PicoLog.Abs's build assets out of the shipped dependency. Case does not matter here either: &quot;build&quot; and &quot;Build&quot; are the same to MSBuild and NuGet (measured). Without it the reference flows its assets to every consumer project; with &quot;all&quot; the dependency disappears from the nuspec altogether — and PicoLog.dll needs PicoLog.Abs at compile and run time, so consumers would receive an assembly they cannot load.&#10;&#10;This guard covers the UNUSED reference, which leaves PicoLog.dll's metadata untouched; a serializer that is actually USED additionally trips AssemblySurfaceTests.PicoLog_ReferencesNoSerializer."
     />
   </Target>
 </Project>
