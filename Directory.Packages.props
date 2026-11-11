@@ -10,7 +10,7 @@
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
     <PackageVersion Include="PicoBench" Version="2026.2.6" />
     <PackageVersion Include="PicoDI" Version="$(Version)" />
     <PackageVersion Include="PicoDI.Abs" Version="$(Version)" />
