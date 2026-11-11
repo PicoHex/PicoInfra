@@ -36,6 +36,6 @@
     <PackageVersion Include="PicoToml" Version="2026.13.0" />
     <PackageVersion Include="TUnit" Version="1.65.51" />
     <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.3.3" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.3.3" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.5.2" />
   </ItemGroup>
 </Project>
