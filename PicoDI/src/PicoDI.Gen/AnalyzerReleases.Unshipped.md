@@ -10,8 +10,3 @@
 
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
-PICO002 | PicoDI | Error | Circular dependency detected
-PICO003 | PicoDI | Error | Abstract type registration
-PICO004 | PicoDI | Error | Missing public constructor
-PICO005 | PicoDI | Error | Multiple preferred constructors
-PICO006 | PicoDI | Error | Factory-based registration cannot be intercepted

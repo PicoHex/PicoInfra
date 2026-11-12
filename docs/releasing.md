@@ -17,7 +17,9 @@ Version, tag and baseline decisions come from `picohex-release`, not from anywhe
   `-DryRun` either (see the table below).
 - **The documentation walk.** The printed delta is the list of every document that is now lying —
   READMEs, the wire description, and the `picohex-*` skills, which live outside this repository.
-  `docs/release-notes/` and `AnalyzerReleases.Unshipped.md` are part of that walk.
+  `docs/release-notes/` and the `AnalyzerReleases.*` pair in every `*.Gen` that ships rules are
+  part of that walk: the `Unshipped` rows are promoted into `Shipped` on the tag that publishes
+  them (see "Analyzer release tracking" below).
 - **Apply, then push.** Applying refreshes `api/`, commits `chore(release): v<version>` when the
   baselines moved, and creates the annotated tag.
 
@@ -33,6 +35,50 @@ and do not infer it from a date.
 | `scripts/check-release-parity.sh` | Drift guard: the project sets packed by `release.ps1` and by `release.yml` must be identical, and so must the test-project sets. Runs `dotnet pack`/`dotnet test` target extraction, exits non-zero on any difference. Run it after touching either side — drift here is silent, and once left PicoSchedule out of the local feed. |
 | `artifacts/nupkg` | The local folder feed. Restored automatically when the folder exists (`Directory.Build.props` adds it to `RestoreAdditionalProjectSources`). It exists because nuget.org needs minutes to index a new version while sibling repos (PicoActor, PicoNode, PicoAgent, …) restore by `PackageReference`. Same bits as CI, served sooner. |
 | `tools/release-build.sh` | Local verification build: refuses a branch that is not `main` (`exit 2`) and a dirty tree (`exit 3`), prints the exact `HEAD` it built from, and writes artifacts **outside** the repository (`OUT`, default `$TMPDIR/rel-<short sha>`). Its job is proof of provenance, not publication. |
+
+## Analyzer release tracking — the `Shipped` half is per release, the `Unshipped` half is per commit
+
+Four generators ship rule IDs a consumer build can hit, and all four now declare an
+`AnalyzerReleases.Unshipped.md` + `AnalyzerReleases.Shipped.md` pair as `AdditionalFiles`:
+`PicoAop.Gen` (7 rules), `PicoCfg.Gen` (10), `PicoDI.Gen` (5), `PicoMediator.Gen` (1) — **23 rules**
+(`PicoLog.Gen` ships none and has neither file). A `_RequireAnalyzerReleasesFile` target in each of
+those four csprojs fails the build when either file is missing. That target is the **only**
+machine-enforced half: no RS diagnostic fires here, because `Microsoft.CodeAnalysis.Analyzers`
+reaches these projects with `build` assets only, never an `analyzers` asset, so the
+release-tracking analyzer never loads (measured: deleting both `AdditionalFiles` items from
+`PicoAop.Gen.csproj` and rebuilding leaves the warning count unchanged, and rewording a
+descriptor produces no diagnostic either). The files are a record first, a gate second.
+
+- **The split.** `Unshipped.md` holds the rows added, reworded or retired since the last release.
+  `Shipped.md` holds one `## Release <version>` section per tag, with the rows that first shipped in
+  it. Same columns in both: `Rule ID | Category | Severity | Notes`.
+- **Promote at the release**, in the same commit that writes `docs/release-notes/<tag>.md`: move
+  every `### New Rules` row out of `Unshipped.md` into a `## Release <version>` section of
+  `Shipped.md`, leave `Unshipped.md`'s tables empty, and put any reworded or retired rule under
+  `### Changed Rules` / `### Removed Rules` in `Unshipped.md` for the *next* release to promote.
+- **`<version>` is the release tag without the `v` — never a project's version.** One tag is one
+  `<year>.<x>.<y>` for every package, so there is no separate generator version to read. The `.Gen`
+  projects cannot supply one anyway: all five are `IsPackable=false`, and the generator DLL reaches
+  consumers only as `analyzers/dotnet/cs` inside `PicoX.Abs` (`IsPackable=true`, which packs the
+  generator DLL into it with `PackagePath="analyzers/dotnet/cs"`). **A rule ships when the `.Abs`
+  package carrying it is tagged**, and that is the same tag either way.
+- **Why at the release and not later.** `Shipped.md` is what makes a rule *old*. A rule parked in
+  `Unshipped.md` after it has reached nuget.org has no baseline, so the next reword or removal of a
+  consumer-facing ID is no longer visible as such — the precise rot the tracking exists to prevent.
+- **The first entries are archaeology, and each file says so.** No `AnalyzerReleases.*` file existed
+  at any tag up to and including `v2026.11.0` (the `.Abs` packages packed the generator, nothing
+  tracked the IDs); the tracking landed in `b5caf5b` (2026-11-12) and the missing-file guard in
+  `0a52b39`, six days after the `v2026.11.0` tag (2026-11-06). The `Shipped.md` headers therefore
+  record how each `## Release` heading was obtained — one `git grep` per rule ID per tag, oldest tag
+  first, plus a check that the tag published a package carrying the generator — instead of implying a
+  promotion someone performed. Every rule is dated to its **real** first tag: 14 in `v2026.1.1` (as
+  the standalone `PicoCfg.Gen`/`PicoDI.Gen` packages, which were `IsPackable=true` then and in the
+  release pack list), 4 in `v2026.1.2`, 1 in `v2026.8.1`, 1 in `v2026.8.6`, 3 in `v2026.11.0`
+  (`PICO111`, `PICO112`, `PICO113`). Dating all 23 to `v2026.11.0` because the *tracking* started
+  there would have been wrong for 20 of them — by 42–43 releases for the 18 that shipped in
+  `v2026.1.1` / `v2026.1.2`, and by 11–16 for the two that shipped in `v2026.8.1` / `v2026.8.6`.
+  From here on the promotion is the ordinary case: whatever `Unshipped.md` holds when the tag is
+  cut.
 
 ## `api/` baselines and `scripts/api-surface/` are generated — never hand-edit
 

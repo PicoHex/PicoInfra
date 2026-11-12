@@ -31,6 +31,10 @@
          without a row appearing here. A build input only — it is not packed and does not
          change the analyzer assembly that ships inside the .Abs package. -->
     <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+    <!-- The other half of the tracking: what a published version already carries. Declared as an
+         input next to its pair, so neither file can be deleted without the build saying so and
+         a future release-tracking check has both halves. -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
   </ItemGroup>
 
   <!-- RS2008 is satisfied by the DECLARED item, not by the file: deleting the tracking file
@@ -39,5 +43,11 @@
   <Target Name="_RequireAnalyzerReleasesFile" BeforeTargets="CoreCompile">
     <Error Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Unshipped.md')"
            Text="AnalyzerReleases.Unshipped.md is missing while this generator still declares it as an AdditionalFiles input. RS2008 does not notice an absent file, so this target does - restore the file or remove the AdditionalFiles item." />
+    <!-- Same failure, other half: without the file the record of what already shipped to consumers
+         is gone, and this target would guard one file of a two-file pair. No RS diagnostic fills
+         that gap - this project gets Microsoft.CodeAnalysis.Analyzers as a `build` asset only, so
+         the release-tracking analyzer never loads (see docs/releasing.md). -->
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Shipped.md')"
+           Text="AnalyzerReleases.Shipped.md is missing while this generator still declares it as an AdditionalFiles input. Without it every shipped rule reads as unshipped and edits to already-published rule IDs stop being reported - restore the file, or delete the AdditionalFiles item with a reason." />
   </Target>
 </Project>
