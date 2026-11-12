@@ -48,6 +48,20 @@ this branch was cut from (`5f85fc2`).
   happens as part of applying the release, not before it.
 - Adding or removing a packable project changes the baseline set itself — that is a deliberate act,
   not a side effect of a build.
+- **CI enforces this** — `.github/workflows/ci.yml`, job `api-baselines`, which runs
+  `scripts/check-api-baselines.sh` on every PR and push. The two steps are the design:
+  - `verify` **fails** when `api/` differs from `api/` at the newest release tag reachable from
+    `HEAD`. A release is the only thing that writes these files, so *any* difference is a
+    hand-edit — and a hand-edit used to be invisible until a human ran the release tool, which
+    then reads the delta as "API unchanged" and answers with a `y` bump where an `x` is due. It
+    costs no build and cannot fail on ordinary development: `api/` lagging `main` is the point.
+  - `report` **does not fail** on a surface change, on purpose. It builds the tree, extracts every
+    packable surface with `scripts/api-surface`, posts the per-package delta against `api/` and the
+    version that delta implies to the job summary, and warns when the surface moved. Failing here
+    would mean `main` is red from a breaking commit until its release — four days around
+    `v2026.11.0` — and the cheapest way to silence it is the early refresh this section forbids.
+    It fails only when it cannot extract at all (build or tool failure), because a gate that skips
+    silently is indistinguishable from one that checked.
 - **Run the dry run and the apply step from a checkout with no live `.worktrees/*`.** It is the skill
   script's project discovery that recurses the repository root for `*.csproj`
   (`Get-PackableProjects`), so a nested checkout under `.worktrees/` contributes a second copy of
