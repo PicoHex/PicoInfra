@@ -183,6 +183,7 @@ Registration-analysis diagnostics (PICO002–PICO006) come from PicoDI.Gen.
 
 | Package | Description |
 |---|---|
+| **PicoAop** | Metapackage — `PicoAop.Abs` (abstractions + embedded proxy generator) and `PicoAop.DI` (DI integration) in one reference |
 | **PicoAop.Abs** | `IInterceptor`, `IInvocation<TResult>`, `InterceptorBase` |
 | **PicoAop.Gen** | Roslyn source generator — emits decorator classes (embedded in `PicoAop.Abs`) |
 | **PicoAop.DI** | DI extensions: `InterceptBy<T>()`, `AddInterceptor<T>()` |

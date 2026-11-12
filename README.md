@@ -18,10 +18,10 @@ PicoInfra is a **modular infrastructure toolkit** for .NET — five libraries th
 | Module | Role | Packages |
 |---|---|---|
 | **PicoDI** | Dependency Injection | `PicoDI` `PicoDI.Abs` |
-| **PicoCfg** | Configuration | `PicoCfg` `PicoCfg.Abs` `PicoCfg.*` |
-| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` `PicoLog.Json` |
-| **PicoAop** | AOT Interception (AOP) | `PicoAop.Abs` `PicoAop.DI` |
-| **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` |
+| **PicoCfg** | Configuration | `PicoCfg` `PicoCfg.Abs` `PicoCfg.DI` `PicoCfg.Json` `PicoCfg.Yaml` `PicoCfg.Ini` `PicoCfg.Toml` |
+| **PicoLog** | Structured Logging | `PicoLog` `PicoLog.Abs` `PicoLog.DI` `PicoLog.Json` |
+| **PicoAop** | AOT Interception (AOP) | `PicoAop` `PicoAop.Abs` `PicoAop.DI` |
+| **PicoMediator** | In-process Messaging | `PicoMediator` `PicoMediator.Abs` `PicoMediator.DI` |
 | **PicoSchedule** | Embedded AOT Scheduling (cron) | `PicoSchedule` |
 
 > Source generators (`PicoDI.Gen`, `PicoAop.Gen`, `PicoCfg.Gen`, `PicoLog.Gen`, `PicoMediator.Gen`) are **embedded inside the corresponding `.Abs` package** (`analyzers/dotnet/cs`, auto-activated). The standalone `*.Gen` packages are **no longer published**: only the pre-merger tags `v2026.1.1`, `v2026.6.0`, `v2026.6.1` and `v2026.7.0` ever shipped them (tag numbers there do not track history — `v2026.7.0` is an ancestor of `v2026.6.1`), and every release since `v2026.6.2` embeds the generator in `.Abs`, so installing a standalone `*.Gen` only adds a stale duplicate analyzer.
@@ -441,6 +441,7 @@ var mediator = scope.GetService<IMediator>();
 ### AOP
 | Package | Description |
 |---|---|
+| **PicoAop** | Metapackage — `PicoAop.Abs` and `PicoAop.DI` in one reference |
 | **PicoAop.Abs** | AOT-first interceptor abstractions — `IInterceptor`, `IInvocation`, `InterceptorBase` + embedded proxy generator |
 | **PicoAop.DI** | DI integration — `.InterceptBy<T>()`, `.AddInterceptor<T>()`, `.WithoutInterceptor<T>()`, `.WithoutInterceptors()` |
 
