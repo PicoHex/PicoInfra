@@ -25,6 +25,11 @@ jobs:
     name: Pack packages
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Consumed by `publish` (job name, and the release title once it needs it).
+    # Without this block `needs.pack.outputs.version` is undefined and the
+    # consuming expression silently falls through to its `||` default.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -232,8 +237,19 @@ jobs:
       id-token: write
 
     steps:
+      # Checkout must come BEFORE the artifact download: `actions/checkout`
+      # runs `git clean -ffdx`, which would delete package files already
+      # extracted into the workspace.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
       - name: Download package artifacts
-        uses: actions/download-artifact@v4
+        # v8 is the counterpart of `upload-artifact@v7` used by `pack`: both run
+        # on node24 and speak the same @actions/artifact protocol, and v8 added
+        # the "do not unzip non-zipped artifacts" handling that pairs with v7's
+        # direct-upload support. Do not bump one without the other.
+        uses: actions/download-artifact@v8
         with:
           name: nupkg
 
@@ -251,20 +267,85 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
+          packages=()
+          symbols=()
+
+          # `*.nupkg` never matches `*.snupkg`, so symbol packages are NOT part
+          # of this glob - they get their own loop below. The guard that remains
+          # here only ever fires for the legacy `*.symbols.nupkg` archive format,
+          # which nuget.org rejects on the packages endpoint.
           for file in *.nupkg; do
-            if [[ "$file" != *.snupkg ]] && [[ "$file" != *.symbols.nupkg ]]; then
-              dotnet nuget push "$file" \
-                --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
-                --source https://api.nuget.org/v3/index.json \
-                --skip-duplicate
+            if [[ "$file" == *.symbols.nupkg ]]; then
+              echo "::warning::Skipping legacy symbol package '$file' (only .snupkg is published)."
+              continue
             fi
+            packages+=("$file")
           done
+
+          for file in *.snupkg; do
+            symbols+=("$file")
+          done
+
+          if [[ ${#packages[@]} -eq 0 ]]; then
+            echo "::error::No .nupkg files in $(pwd) - nothing to publish."
+            exit 1
+          fi
+
+          echo "Publishing ${#packages[@]} package(s) and ${#symbols[@]} symbol package(s)."
+
+          for file in "${packages[@]}"; do
+            dotnet nuget push "$file" \
+              --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
+
+          # Symbol packages: same endpoint, pushed after their .nupkg so the
+          # version already exists on the feed. --skip-duplicate keeps re-runs
+          # idempotent, exactly like the package loop.
+          for file in "${symbols[@]}"; do
+            dotnet nuget push "$file" \
+              --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done
+
+          echo "Published ${#packages[@]} package(s) and ${#symbols[@]} symbol package(s)."
+
+      - name: Resolve release notes for ${{ github.ref_name }}
+        id: notes
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes="docs/release-notes/${tag}.md"
+          # Fail loudly: a release page with silently empty notes is worse than
+          # a red run.
+          if [[ ! -f "$notes" ]]; then
+            echo "::error::Missing release notes file '$notes' for tag '$tag'. Write it before tagging."
+            exit 1
+          fi
+          if [[ ! -s "$notes" ]]; then
+            echo "::error::Release notes file '$notes' is empty."
+            exit 1
+          fi
+          bytes=$(wc -c < "$notes")
+          # GitHub caps a release body at 125000 characters and the action
+          # truncates silently, so warn before the tail disappears.
+          if [[ "$bytes" -gt 120000 ]]; then
+            echo "::warning::'$notes' is $bytes bytes, near GitHub's 125000-char release body cap."
+          fi
+          echo "path=$notes" >> "$GITHUB_OUTPUT"
+          echo "Release notes: $notes ($bytes bytes)"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
+          # Human-written notes first, then the auto-generated compare link:
+          # with both `body_path` and `generate_release_notes`, the action sets
+          # body = "<file contents>" + blank line + <generated notes>.
+          body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: true
           files: |
             *.nupkg
