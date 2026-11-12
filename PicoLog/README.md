@@ -381,10 +381,12 @@ var options = new LoggerFactoryOptions
 ```
 
 On shutdown timeout, sinks receive a drain `CancellationToken`. The factory waits for the processing
-pipeline to finish draining before disposing resources. That deadline is a `CancellationTokenSource`
-timer — `ThreadPool` work — so under total pool starvation it is not honoured: the wait ends
-whenever a worker frees up, not at the budget (recorded as a known limitation in
-`docs/release-notes/v2026.11.0.md`, "Deadlines a starved `ThreadPool` does not honour").
+pipeline to finish draining before disposing resources. That deadline is **not** a timer: it is armed
+on a dedicated watchdog thread that watches a `Stopwatch`, so the cancellation reaches an in-flight
+sink write at the budget even when every `ThreadPool` worker is occupied (the timer-shaped limitation
+this replaces is recorded in `docs/release-notes/v2026.11.0.md`, "Deadlines a starved `ThreadPool`
+does not honour"). The pipeline that runs *after* the drain is still pool work, so a starved pool can
+delay the last hop of `DisposeAsync` — the drain cancellation itself no longer waits for a worker.
 
 ## DI Integration (PicoLog.DI)
 

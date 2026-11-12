@@ -110,7 +110,13 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
         // cooperative providers; the bounded waits are a safety cap for
         // non-cooperative ones (see the finally block for what happens when even
         // the retry times out).
-        var entered = await _reloadGate.WaitAsync(_reloadDrainTimeout, CancellationToken.None);
+        // Blocking, not WaitAsync(timeout): the async timeout overload needs a ThreadPool worker to
+        // end the wait, so under a starved pool it did not end at the budget at all (measured:
+        // WaitAsync(500 ms) never returned, Wait(500 ms) returned at 1.18x — see docs/release-notes/
+        // v2026.11.0.md, "Deadlines a starved ThreadPool does not honour"). The caller's own thread
+        // does the timing here; the trade-off is that DisposeAsync now blocks for at most this budget
+        // while a non-cooperative reload holds the gate, instead of hanging indefinitely.
+        var entered = ShutdownDeadline.WaitOrAbandon(_reloadGate, _reloadDrainTimeout);
         try
         {
             List<Exception>? exceptions = null;
@@ -150,9 +156,9 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
                 // gate stays with its owner (see below).
                 try
                 {
-                    drained = await _reloadGate
-                        .WaitAsync(_reloadDrainRetryTimeout, CancellationToken.None)
-                        .ConfigureAwait(false);
+                    // Same pool-free spelling as the primary wait above; there is no token here, so
+                    // the blocking wait is the whole of it.
+                    drained = ShutdownDeadline.WaitOrAbandon(_reloadGate, _reloadDrainRetryTimeout);
                     if (drained)
                     {
                         _reloadGate.Release();
@@ -162,11 +168,6 @@ internal sealed class CfgRoot : ICfgRoot, IInternalCfgRootSnapshotAccessor
                 {
                     // Already disposed by someone else.
                     drained = true;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Should not happen with CancellationToken.None, but
-                    // defensive — proceed with disposal.
                 }
             }
 

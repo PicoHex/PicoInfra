@@ -122,18 +122,22 @@ internal sealed class CategoryPipeline : IAsyncDisposable
         // or blocks on the semaphore acquisition.
         await _flushSemaphore.WaitAsync().ConfigureAwait(false);
 
-        CancellationTokenSource? drainCts = null;
+        DeadlineSignal? drainDeadline = null;
 
         try
         {
             var shutdownTimeout = _runtime.ShutdownTimeout;
-            drainCts =
-                shutdownTimeout > TimeSpan.Zero
-                    ? new CancellationTokenSource(shutdownTimeout)
-                    : null;
+            // Not a CancellationTokenSource(TimeSpan): that budget is a Timer callback, i.e.
+            // ThreadPool work, so under a starved pool the in-flight sink write was cancelled late
+            // or never (docs/release-notes/v2026.11.0.md, "Deadlines a starved ThreadPool does not
+            // honour"). The deadline's own token is cancelled by a dedicated watchdog thread at the
+            // budget, and the sink write waiting on it resumes on that thread. TimeSpan.Zero still
+            // means unbounded: no deadline is armed at all.
+            drainDeadline =
+                shutdownTimeout > TimeSpan.Zero ? ShutdownDeadline.CancelAt(shutdownTimeout) : null;
 
-            if (drainCts is not null)
-                _sinkDispatcher.BeginDrain(drainCts.Token);
+            if (drainDeadline is not null)
+                _sinkDispatcher.BeginDrain(drainDeadline.Token);
 
             _queue.Complete();
 
@@ -147,7 +151,7 @@ internal sealed class CategoryPipeline : IAsyncDisposable
         finally
         {
             _sinkDispatcher.Dispose();
-            drainCts?.Dispose();
+            drainDeadline?.Dispose();
             _flushSemaphore.Dispose();
         }
     }
