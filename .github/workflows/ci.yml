@@ -49,6 +49,7 @@ env:
 # Current split, per job: Run/*tests* -> default, they gate everything after them.
 #                        AOT publish validation, coverage upload, dump upload -> !cancelled().
 #                        Pack CI packages, sample smoke tests, publish!=run guard -> default.
+#                        api/ verdict (verify) -> default; surface delta report -> !cancelled().
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -151,6 +152,91 @@ jobs:
 
       - name: Check scripts/release.ps1 packs the same projects as release.yml
         run: bash scripts/check-release-parity.sh
+
+  # ---------------------------------------------------------------------------
+  # API baselines — `api/` is generated output, and this is the gate that says so
+  #
+  # `api/<PackageId>.public.txt` (20 files) is the public surface of the LAST
+  # RELEASE: the release tool writes it from the tagged tree, and it is committed
+  # so the next version can be decided from a diff. Nothing used to read it, so a
+  # hand-edit was invisible until a human ran the release tool. That is the hole
+  # this job closes, and the rule it states where a contributor will see it:
+  #
+  #   api/ IS GENERATED. NEVER EDIT IT. It is not documentation and not a
+  #   changelog. A PR that changes the public surface does NOT touch api/: the
+  #   next release refreshes it from the tagged tree and bumps x. Editing it makes
+  #   the release tool compare the tree against a baseline that already matches
+  #   it, so it reports "API unchanged" and answers with a y bump where an x is
+  #   due — a breaking change shipped as a patch (docs/releasing.md).
+  #
+  # Semantics enforced: (a) drift detector. `api/` must be byte-identical to
+  # `api/` at the newest release tag reachable from HEAD
+  # (scripts/check-api-baselines.sh verify: ~2 s, no build, no NuGet feed, no
+  # sibling repositories). Development moves freely. A "compare api/ with the
+  # current tree" gate is wrong for this repository specifically: the baselines
+  # deliberately lag `main` between releases, so such a gate is red for every
+  # post-release commit that adds API, and the only way to green it is the early
+  # refresh that corrupts the version decision.
+  #
+  # Rejected (b) forward-check, "fail only on removals relative to the
+  # baselines". It has the best story for the last cycle — it would have gone red
+  # at edf2cfd (2026-11-02, `bool flattenArrays = false` added to AddToml /
+  # AddYaml: source-compatible, binary-breaking) and at 5729d95 (2026-11-03,
+  # SeqSink moved out of PicoLog into PicoLog.Json, a removal in
+  # PicoLog.public.txt). But those are the commits that *legitimately* removed
+  # surface, so `main` would have been red for the four days until v2026.11.0 was
+  # tagged on 2026-11-06 — and the cheapest way to silence that is the one
+  # action that corrupts the version decision. It also cannot see the hand-edit
+  # that masks a change (add the member, hand-add the line): extraction at HEAD
+  # then equals the edited baseline, the gate is green, and the release answers y.
+  # Only a tag-relative check sees that one.
+  # Rejected (c) strict, "every surface-touching PR refreshes api/". A policy
+  # change that makes the release tool's delta empty by construction, which is
+  # exactly the trap docs/releasing.md warns about.
+  #
+  # What the last release cycle would have done here, and when:
+  #   da73005 2026-11-03 `CfgKeyCollisionException` (pure addition, +4 lines)
+  #     — green at the PR, as it should be; the advisory step reports +4 and the
+  #       next release as an x bump. Nothing to fix in that PR.
+  #   edf2cfd + 5729d95, the two removals (the flattenArrays signatures, the
+  #   SeqSink move; -2/+2 and -13/+12)
+  #     — green at the PR (a legitimate break stays green under (a)), reported by
+  #       the advisory step, and caught for certain by the release tool at tag
+  #       time, which is where the x bump (10.1 -> 11.0) was decided.
+  #   the hand-edited variant of any of them — red here, at PR time. Nothing
+  #   caught that before.
+  #
+  # The second step is advisory on purpose: it builds the tree, extracts the
+  # surface of every packable assembly with scripts/api-surface, prints the delta
+  # against api/ and the version that delta implies, and writes it to the job
+  # summary. It fails only when it cannot extract (build or tool failure) — a gate
+  # that skips silently is indistinguishable from one that checked.
+  # ---------------------------------------------------------------------------
+  api-baselines:
+    name: API baselines (generated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # fetch-depth: 0 — the verdict compares against a release tag, so the tags
+      # have to be in the clone.
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: api/ still describes the last release (api/ is never hand-edited)
+        run: bash scripts/check-api-baselines.sh verify
+
+      # Reporting step: runs on a red job by design (see "Step gating policy").
+      - name: Surface delta since the last release (advisory)
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p ./artifacts/nupkg
+          bash scripts/check-api-baselines.sh report
 
   # ---------------------------------------------------------------------------
   # PicoDI
