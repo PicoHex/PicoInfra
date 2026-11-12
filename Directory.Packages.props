@@ -4,14 +4,14 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="11.0.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
-    <PackageVersion Include="PicoBench" Version="2026.2.6" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
+    <PackageVersion Include="PicoBench" Version="2026.3.0" />
     <PackageVersion Include="PicoDI" Version="$(Version)" />
     <PackageVersion Include="PicoDI.Abs" Version="$(Version)" />
     <PackageVersion Include="PicoCfg" Version="$(Version)" />
@@ -30,12 +30,12 @@
     <PackageVersion Include="PicoCfg.Yaml" Version="$(Version)" />
     <PackageVersion Include="PicoLog.DI" Version="$(Version)" />
     <PackageVersion Include="PicoLog.Json" Version="$(Version)" />
-    <PackageVersion Include="PicoJetson" Version="2026.13.0" />
-    <PackageVersion Include="PicoYaml" Version="2026.13.0" />
-    <PackageVersion Include="PicoIni" Version="2026.13.0" />
-    <PackageVersion Include="PicoToml" Version="2026.13.0" />
-    <PackageVersion Include="TUnit" Version="1.65.51" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.3.3" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.3.3" />
+    <PackageVersion Include="PicoJetson" Version="2026.13.1" />
+    <PackageVersion Include="PicoYaml" Version="2026.13.1" />
+    <PackageVersion Include="PicoIni" Version="2026.13.1" />
+    <PackageVersion Include="PicoToml" Version="2026.13.1" />
+    <PackageVersion Include="TUnit" Version="1.83.8" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.5.3" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.5.3" />
   </ItemGroup>
 </Project>
