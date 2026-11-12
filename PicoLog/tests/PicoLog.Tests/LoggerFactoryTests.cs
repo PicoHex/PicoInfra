@@ -1442,22 +1442,81 @@ public sealed class LoggerFactoryTests
     [Test]
     public async Task DisposeAsync_WaitsForActiveSinkWrites_BeforeDisposingSinks()
     {
+        // Contract: a sink is disposed only after the writes it is already running have finished.
+        //
+        // Nothing here is a duration, and the "not disposed yet" observation is structural. Two
+        // things make it so, and the shape below leans on both:
+        //
+        //  - ShutdownTimeout is Zero, so the drain owns no deadline and can never cancel the parked
+        //    write, which means it can never get past it either. Under the default 30 s deadline a
+        //    starved pool could cancel the write and dispose the sink inside the old 50 ms window,
+        //    which turned the assertion into a claim about this machine's scheduling instead of
+        //    about the factory. (This suite has measured Task.Delay(10) continuations at a 185.6 ms
+        //    worst case and a 17.5 s straggle just to observe one completion on a 4-vCPU view with
+        //    CPU burners holding every core.)
+        //  - DisposeAsync signals shutdown in its synchronous prefix, before its first incomplete
+        //    await, so by the time it hands this thread a Task the pipelines are already being
+        //    drained and the sink disposal is queued behind that drain by construction. The
+        //    ObjectDisposedException from CreateLogger below is the witness that it happened, which
+        //    is what keeps the assertion below from being vacuous rather than merely late.
+        //
+        // The disposal order is also recorded by the sink itself, so the contract survives as an
+        // outcome even in the absence of the observation above.
         var sink = new CoordinatedDisposalSink();
-        await using var factory = new LoggerFactory([sink]);
+        var options = new LoggerFactoryOptions { ShutdownTimeout = TimeSpan.Zero };
+        await using var factory = new LoggerFactory([sink], options);
         var logger = factory.CreateLogger("Tests.Category");
 
         await logger.InfoAsync("payload");
         await sink.WriteStarted;
 
         var disposeTask = factory.DisposeAsync().AsTask();
-        await Task.Delay(50);
 
-        await Assert.That(sink.DisposeCallCount).IsEqualTo(0);
+        // Witness, before anything is asserted: shutdown has begun, so the drain this test is about
+        // is already running. CreateLogger only rejects once writes are no longer accepted, i.e.
+        // inside DisposeAsync's synchronous prefix; if that ever became asynchronous this fails
+        // instead of the test quietly passing on a factory that had not started disposing at all.
+        await Assert
+            .That(() => factory.CreateLogger("Tests.DuringShutdown"))
+            .Throws<ObjectDisposedException>()
+            .Because(
+                "DisposeAsync must have signalled shutdown by the time it returns a Task here"
+            );
+
+        await Assert
+            .That(sink.DisposeCallCount)
+            .IsEqualTo(0)
+            .Because(
+                "a write is still parked inside the sink and the drain has already begun, so the"
+                    + " sink must not be disposed; the drain cannot pass a write it is waiting on"
+            );
+        await Assert
+            .That(sink.DisposeCallsWhileWriteInFlight)
+            .IsEqualTo(0)
+            .Because("the sink must never be disposed while one of its writes is still in flight");
 
         sink.ReleaseWrite();
-        await disposeTask;
+
+        // Whatever the sink was waiting on, the drain must then finish. This is a deadlock guard,
+        // not a latency budget: a drain that never waits for its writes disposes the sink before
+        // this point, and one that never finishes is caught by any finite bound.
+        await Assert
+            .That(await DrainsWithinAsync(disposeTask, DrainDeadlockGuard))
+            .IsTrue()
+            .Because(
+                $"DisposeAsync must finish once the in-flight write returns; it was still running "
+                    + $"{DrainDeadlockGuard.TotalSeconds:0} s later, which is stuck, not slow."
+            );
 
         await Assert.That(sink.DisposeCallCount).IsEqualTo(1);
+        await Assert
+            .That(sink.CompletedWriteCount)
+            .IsEqualTo(1)
+            .Because("the in-flight write must be allowed to finish, not cancelled by a deadline");
+        await Assert
+            .That(sink.DisposeCallsWhileWriteInFlight)
+            .IsEqualTo(0)
+            .Because("the sink must never be disposed while one of its writes is still in flight");
     }
 
     [Test]
@@ -1557,25 +1616,68 @@ public sealed class LoggerFactoryTests
     [Test]
     public async Task DisposeAsync_RejectsWrites_After_Shutdown_Begins()
     {
+        // Contract: once factory shutdown has begun, a write is rejected at the door — it never
+        // enters the queue, so it can never be written to a sink the drain is about to tear down.
+        //
+        // This test used to wait 50 ms after DisposeAsync "so that the shutdown could arrive". That
+        // wait asserted nothing the API guarantees, and it made the test weaker the slower the
+        // machine got: a write issued 50 ms late lands *after* an implementation that signalled
+        // shutdown 49 ms late, so detection quietly depended on this thread's scheduling rather
+        // than on the factory's behaviour. DisposeAsync signals shutdown in its synchronous prefix,
+        // before its first incomplete await, so the writes below are issued strictly after the
+        // signal with no window at all — and the CreateLogger witness proves the signal was sent.
         var sink = new CoordinatedDisposalSink();
-        await using var factory = new LoggerFactory([sink]);
+        var options = new LoggerFactoryOptions { ShutdownTimeout = TimeSpan.Zero };
+        await using var factory = new LoggerFactory([sink], options);
         var logger = factory.CreateLogger("Tests.Category");
 
         await logger.InfoAsync("before-dispose");
         await sink.WriteStarted;
 
         var disposeTask = factory.DisposeAsync().AsTask();
-        await Task.Delay(50);
+
+        await Assert
+            .That(() => factory.CreateLogger("Tests.AfterShutdown"))
+            .Throws<ObjectDisposedException>()
+            .Because(
+                "DisposeAsync must have signalled shutdown by the time it returns a Task here"
+            );
+
+        // The drain is still parked inside the sink, so "no disposal yet" cannot be explained by a
+        // pipeline that already finished and tore the sink down.
+        await Assert
+            .That(sink.DisposeCallCount)
+            .IsEqualTo(0)
+            .Because(
+                "the drain is parked on the in-flight write and cannot have disposed the sink"
+            );
 
         logger.Warning("after-dispose-sync");
         await logger.ErrorAsync("after-dispose-async");
 
-        sink.ReleaseWrite();
-        await disposeTask;
+        // Not the conviction on its own — an accepted write would still be sitting in the queue at
+        // this instant — but it keeps the shape honest if the queue were ever drained eagerly.
+        await Assert.That(sink.Entries).Count().IsEqualTo(1);
 
+        sink.ReleaseWrite();
+        await Assert
+            .That(await DrainsWithinAsync(disposeTask, DrainDeadlockGuard))
+            .IsTrue()
+            .Because(
+                $"DisposeAsync must finish once the in-flight write returns; it was still running "
+                    + $"{DrainDeadlockGuard.TotalSeconds:0} s later, which is stuck, not slow."
+            );
+
+        // The conviction: had either write after shutdown been accepted, the drain would have
+        // written it to this sink when it resumed above, so the door has to be shut, not just
+        // slow to open.
         var messages = sink.Entries.Select(entry => entry.Message).ToArray();
         await Assert.That(messages).Count().IsEqualTo(1);
         await Assert.That(messages[0]).IsEqualTo("before-dispose");
+        await Assert
+            .That(sink.CompletedWriteCount)
+            .IsEqualTo(1)
+            .Because("the in-flight write must finish; a cancelled write would reject nothing");
     }
 
     [Test]
@@ -1628,6 +1730,10 @@ public sealed class LoggerFactoryTests
         {
             QueueCapacity = 1,
             QueueFullMode = LogQueueFullMode.Wait,
+            // Keeps the drain deadline out of this test: the parked write must be released by
+            // sink.Release below and never cancelled by the drain, so the write that is pending
+            // here is pending for the reason this test is about.
+            ShutdownTimeout = TimeSpan.Zero,
             OnMessagesDropped = (_, count) => reportedDropCount = count,
         };
         await using var factory = new LoggerFactory([sink], options);
@@ -1638,28 +1744,73 @@ public sealed class LoggerFactoryTests
         logger.Info("second");
 
         Task pendingWriteTask;
+        Task disposeTask;
 
         try
         {
             pendingWriteTask = logger.InfoAsync("third");
-            await Task.Delay(50);
-            await Assert.That(pendingWriteTask.IsCompleted).IsFalse();
 
-            var disposeTask = factory.DisposeAsync().AsTask();
-            await Task.Delay(50);
+            // The precondition, stated without a window. The write is pending by construction, not
+            // because less than 50 ms have passed: the Wait-mode async path parks on the channel
+            // with no timeout of its own, the capacity-1 queue is full, and its only reader is
+            // parked inside the sink. (The delay that used to sit here was inert rather than
+            // dangerous — a later observation can only strengthen a "still pending" claim — but it
+            // asserted nothing on its own and cost a window of real time.)
+            await Assert
+                .That(pendingWriteTask.IsCompleted)
+                .IsFalse()
+                .Because(
+                    "a Wait-mode write behind a full queue and a parked sink is pending, not dropped"
+                );
+
+            disposeTask = factory.DisposeAsync().AsTask();
+
+            // Witness that shutdown has begun: DisposeAsync signals it in its synchronous prefix,
+            // so the pending write is classified against a factory that has already stopped
+            // accepting writes — not against one that might be about to.
+            await Assert
+                .That(() => factory.CreateLogger("Tests.AfterShutdown"))
+                .Throws<ObjectDisposedException>()
+                .Because(
+                    "DisposeAsync must have signalled shutdown by the time it returns a Task here"
+                );
 
             sink.Release();
-            await Task.WhenAll(disposeTask, pendingWriteTask);
         }
         finally
         {
             sink.Release();
         }
 
+        // Deadlock guard, not a latency budget: both must finish once the sink has room, and any
+        // finite bound catches the pipeline that never does.
+        await Assert
+            .That(
+                await CompletesWithinAsync(
+                    Task.WhenAll(disposeTask, pendingWriteTask),
+                    DrainDeadlockGuard
+                )
+            )
+            .IsTrue()
+            .Because(
+                "the pending write and the drain must both finish once the sink is released; they"
+                    + $" were still running {DrainDeadlockGuard.TotalSeconds:0} s later, which is"
+                    + " stuck, not slow."
+            );
+
         listener.RecordObservableInstruments();
 
+        // What the pipeline observed: the write that was waiting for room never reached the sink —
+        // it was rejected, not admitted and not dropped — and the writes that did fit kept their
+        // order.
         await Assert.That(sink.WrittenCount).IsEqualTo(2);
         await Assert.That(reportedDropCount).IsEqualTo(0);
+        await Assert
+            .That(string.Join("|", sink.Entries.Select(static entry => entry.Message)))
+            .IsEqualTo("first|second");
+        // Classification: rejected-after-shutdown rather than dropped. The counter is process-wide
+        // (every factory in the run feeds it), so this asserts that the classification was recorded,
+        // not that this factory was its only source.
         await AssertMeasurementAtLeastAsync(
             measurements,
             PicoLogMetrics.ShutdownRejectedWritesName,
@@ -1791,10 +1942,28 @@ public sealed class LoggerFactoryTests
         await coordinatedSink.WriteStarted;
 
         var shutdownDisposeTask = shutdownFactory.DisposeAsync().AsTask();
-        await Task.Delay(50);
+
+        // DisposeAsync has already signalled shutdown in its synchronous prefix, so the write below
+        // is rejected on this thread with no queue interaction and no arrival window. The 50 ms
+        // delay that used to sit here could only ever have helped this assertion — never the
+        // factory — and it hid the fact that nothing was being waited for.
+        await Assert
+            .That(() => shutdownFactory.CreateLogger("Tests.AfterShutdown"))
+            .Throws<ObjectDisposedException>()
+            .Because(
+                "DisposeAsync must have signalled shutdown by the time it returns a Task here"
+            );
+
         shutdownLogger.Info("after-shutdown");
+
         coordinatedSink.ReleaseWrite();
-        await shutdownDisposeTask;
+        await Assert
+            .That(await DrainsWithinAsync(shutdownDisposeTask, DrainDeadlockGuard))
+            .IsTrue()
+            .Because(
+                "the shutdown drain must finish once the parked write is released; it was still "
+                    + $"running {DrainDeadlockGuard.TotalSeconds:0} s later, which is stuck, not slow."
+            );
         listener.RecordObservableInstruments();
 
         await AssertMeasurementAtLeastAsync(measurements, PicoLogMetrics.EntriesEnqueuedName, 4);
@@ -1999,6 +2168,18 @@ public sealed class LoggerFactoryTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
+    /// <summary>
+    /// A sink that parks one write until <see cref="ReleaseWrite"/>, and records the disposal order
+    /// it observes itself: how often it was disposed, and how many of those disposals happened while
+    /// one of its own writes had not returned yet.
+    /// </summary>
+    /// <remarks>
+    /// The in-flight counter is what lets
+    /// <see cref="DisposeAsync_WaitsForActiveSinkWrites_BeforeDisposingSinks"/> state its contract as
+    /// an outcome — "this sink was never disposed underneath a running write" — instead of as a
+    /// window. The observation is made where the disposal happens and on the thread that performs
+    /// it, so no amount of scheduling can move it out from under the assertion.
+    /// </remarks>
     private sealed class CoordinatedDisposalSink : ILogSink
     {
         private readonly ConcurrentQueue<LogEntry> _entries = [];
@@ -2008,29 +2189,60 @@ public sealed class LoggerFactoryTests
         private readonly TaskCompletionSource _release = new(
             TaskCreationOptions.RunContinuationsAsynchronously
         );
+        private int _inFlightWriteCount;
+        private int _completedWriteCount;
         private int _disposeCallCount;
+        private int _disposeCallsWhileWriteInFlight;
 
         public IReadOnlyCollection<LogEntry> Entries => _entries.ToArray();
 
         public Task WriteStarted => _writeStarted.Task;
 
-        public int DisposeCallCount => _disposeCallCount;
+        public int DisposeCallCount => Volatile.Read(ref _disposeCallCount);
+
+        /// <summary>Writes that were released rather than cancelled — i.e. that the drain let finish.</summary>
+        public int CompletedWriteCount => Volatile.Read(ref _completedWriteCount);
+
+        /// <summary>
+        /// Disposals that happened while a write of this sink had not returned yet. Anything but zero
+        /// means the factory tore the sink down underneath a write it was still running.
+        /// </summary>
+        public int DisposeCallsWhileWriteInFlight =>
+            Volatile.Read(ref _disposeCallsWhileWriteInFlight);
 
         public async Task WriteAsync(LogEntry entry, CancellationToken cancellationToken = default)
         {
             _entries.Enqueue(entry);
+            Interlocked.Increment(ref _inFlightWriteCount);
             _writeStarted.TrySetResult();
-            await _release.Task.WaitAsync(cancellationToken);
+
+            try
+            {
+                await _release.Task.WaitAsync(cancellationToken);
+                Interlocked.Increment(ref _completedWriteCount);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _inFlightWriteCount);
+            }
         }
 
         public void ReleaseWrite() => _release.TrySetResult();
 
-        public void Dispose() => Interlocked.Increment(ref _disposeCallCount);
+        public void Dispose() => RecordDispose();
 
         public ValueTask DisposeAsync()
         {
-            Interlocked.Increment(ref _disposeCallCount);
+            RecordDispose();
             return ValueTask.CompletedTask;
+        }
+
+        private void RecordDispose()
+        {
+            if (Volatile.Read(ref _inFlightWriteCount) > 0)
+                Interlocked.Increment(ref _disposeCallsWhileWriteInFlight);
+
+            Interlocked.Increment(ref _disposeCallCount);
         }
     }
 
