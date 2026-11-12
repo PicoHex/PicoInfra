@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);RS2008;RS1041;NU5128</NoWarn>
+    <NoWarn>$(NoWarn);RS1041;NU5128</NoWarn>
     <IsPackable>false</IsPackable>
     <Description>Source generator for compile-time PicoLog logging methods. Provides [PicoLogMessage] attribute and generates AOT-compatible extension methods on ILogger.</Description>
   </PropertyGroup>

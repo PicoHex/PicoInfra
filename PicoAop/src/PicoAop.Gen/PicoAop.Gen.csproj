@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);RS2008;RS1041;NU5128</NoWarn>
+    <NoWarn>$(NoWarn);RS1041;NU5128</NoWarn>
     <IsPackable>false</IsPackable>
     <Description>Source generator for PicoAop — generates AOT-compatible decorator classes at compile time</Description>
   </PropertyGroup>
@@ -28,5 +28,13 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Analyzer release tracking (Roslyn RS2008): one row per DiagnosticDescriptor this
+         generator emits, so a consumer-facing rule ID cannot be added, reworded or retired
+         without a row appearing here. A build input only — it is not packed and does not
+         change the analyzer assembly that ships inside the .Abs package. -->
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
   </ItemGroup>
 </Project>
