@@ -14,8 +14,9 @@
 ; Recorded LATE: no AnalyzerReleases.* file existed at any of these tags. The tracking landed in
 ; b5caf5b (2026-11-12) and the missing-file guard in 0a52b39, so this file is archaeology, not a
 ; promotion performed at the time. The alternative - promoting everything under the NEXT tag - was
-; rejected: it would claim a first-shipped version that is wrong for all 23 rules - 20 of them first
-; shipped at v2026.1.1 or v2026.1.2, which is 42-43 tags earlier (44 tags exist). Rule:
+; rejected: it would claim a first-shipped version that is wrong for all 23 rules - 20 of them had
+; already shipped before v2026.11.0, 18 of those at v2026.1.1 or v2026.1.2 (42-43 tags earlier; 44
+; tags exist) and 2 at v2026.8.1 / v2026.8.6 (16 and 11 tags earlier). Rule:
 ; docs/releasing.md, "Analyzer release tracking".
 
 ## Release 2026.1.1

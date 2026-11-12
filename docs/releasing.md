@@ -75,8 +75,10 @@ descriptor produces no diagnostic either). The files are a record first, a gate 
   the standalone `PicoCfg.Gen`/`PicoDI.Gen` packages, which were `IsPackable=true` then and in the
   release pack list), 4 in `v2026.1.2`, 1 in `v2026.8.1`, 1 in `v2026.8.6`, 3 in `v2026.11.0`
   (`PICO111`, `PICO112`, `PICO113`). Dating all 23 to `v2026.11.0` because the *tracking* started
-  there would have been wrong for 20 of them by 42–43 releases. From here on the promotion is the
-  ordinary case: whatever `Unshipped.md` holds when the tag is cut.
+  there would have been wrong for 20 of them — by 42–43 releases for the 18 that shipped in
+  `v2026.1.1` / `v2026.1.2`, and by 11–16 for the two that shipped in `v2026.8.1` / `v2026.8.6`.
+  From here on the promotion is the ordinary case: whatever `Unshipped.md` holds when the tag is
+  cut.
 
 ## `api/` baselines and `scripts/api-surface/` are generated — never hand-edit
 
