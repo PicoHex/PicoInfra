@@ -220,6 +220,16 @@ jobs:
           path: |
             ./artifacts/nupkg/*.nupkg
             ./artifacts/nupkg/*.snupkg
+          # A pack step that produced nothing must not look like a green pack step. Without this
+          # key the action WARNS and uploads nothing, so `pack` succeeds with no `nupkg` artifact
+          # and the fault surfaces one job later: `download-artifact@v8` in `publish` finds no
+          # artifact of that name (or, when the artifact exists but is empty, the
+          # `No .nupkg files in $(pwd) - nothing to publish.` guard there fires) - after the
+          # `release` environment gate and the OIDC nuget.org login have already been spent, in a
+          # job named "Publish" reporting a fault that happened in "Pack". With this key THIS step
+          # goes red and names the paths that matched nothing. Same setting as the coverage
+          # uploads in `ci.yml`, which is what made the empty-coverage bug visible there.
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Publish

@@ -9,10 +9,3 @@
 
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
-PICO101 | PicoAop | Error | Sealed type cannot be intercepted
-PICO102 | PicoAop | Error | Value type cannot be intercepted
-PICO105 | PicoAop | Error | Type does not implement IInterceptor
-PICO110 | PicoAop | Warning | Method with ref/out parameters delegated without interception
-PICO111 | PicoAop | Warning | Member cannot be intercepted
-PICO112 | PicoAop | Error | Property with an init accessor cannot be intercepted
-PICO113 | PicoAop | Warning | Members share one generated invocation name

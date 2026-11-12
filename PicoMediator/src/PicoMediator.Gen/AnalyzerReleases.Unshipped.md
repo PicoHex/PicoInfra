@@ -10,4 +10,3 @@
 
 Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
-PMGEN001 | PicoMediator.Gen | Warning | Base-typed publish cannot reach concrete subscribers

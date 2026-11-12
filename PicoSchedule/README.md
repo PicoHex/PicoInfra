@@ -79,3 +79,16 @@ No persistence · no retry · no audit events · no distributed mode ·
 no Generic Host integration (host wires Start/Stop). GUID v7 is the
 identifier convention (`.NET 9+ Guid.CreateVersion7()`); the framework
 does not validate versions.
+
+## Packages
+
+| Package | TFM | Description |
+|---|---|---|
+| **PicoSchedule** | net10.0 | The whole module: `Scheduler`, `SchedulerOptions`, `ScheduleJobOptions`, `ITriggerSink`, `CronPattern`, `GraceMode`, `JobSnapshot`, `ScheduleLogEntry`, `ITimeProvider`, `SystemClock`. Zero `PackageReference` by design, `IsAotCompatible` + `IsTrimmable`. |
+
+One package at `net10.0`: `PicoSchedule/src/PicoSchedule/PicoSchedule.csproj` is the only project
+under `PicoSchedule/src/`, and it is the only one with `IsPackable=true`. The module has no
+embedded source generator — there is no `PicoSchedule.Gen` — so, unlike `PicoAop` / `PicoCfg` /
+`PicoDI` / `PicoLog` / `PicoMediator`, this table has no `.Gen` row to mark as embedded.
+
+[← Back to PicoInfra](../README.md)
