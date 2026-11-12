@@ -440,8 +440,12 @@ public sealed partial class SvcContainer
         List<Exception> failures
     )
     {
-        using var cts = new CancellationTokenSource(HostedSvcStopTimeout);
-        await StopInstanceAsync(started, cts.Token, failures, cts.Token).ConfigureAwait(false);
+        // Armed by the watchdog thread, not by a CancellationTokenSource(TimeSpan) timer: a timer
+        // callback is ThreadPool work, so under a starved pool the token was cancelled late or never
+        // (docs/release-notes/v2026.11.0.md, "Deadlines a starved ThreadPool does not honour").
+        // The token is still the signal the service receives — it now arrives at the deadline.
+        using var budget = ShutdownDeadline.CancelAt(HostedSvcStopTimeout);
+        await StopInstanceAsync(started, budget.Token, failures, budget).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -459,7 +463,7 @@ public sealed partial class SvcContainer
         StartedHostedSvc started,
         CancellationToken cancellationToken,
         List<Exception> failures,
-        CancellationToken deadline = default
+        DeadlineSignal? deadline = null
     )
     {
         var label = DescribeRegistration(
@@ -527,7 +531,7 @@ public sealed partial class SvcContainer
         string serviceLabel,
         Func<Task> action,
         List<Exception> failures,
-        CancellationToken deadline = default
+        DeadlineSignal? deadline = null
     )
     {
         try
@@ -549,12 +553,14 @@ public sealed partial class SvcContainer
     /// A <see cref="CancellationTokenSource"/> only signals: handing its token to a service that
     /// ignores it bounds nothing, which is what made <see cref="HostedSvcStopTimeout"/> a claim
     /// rather than a bound (review-2026-11-02 defect L5). Awaiting through
-    /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline —
-    /// barring a starved pool: it is a <see cref="CancellationTokenSource"/> timer, and both the
-    /// timer callback and the continuation that ends the wait are <see cref="ThreadPool"/> work, so
-    /// under total starvation neither can be scheduled and the wait ends whenever a worker frees up
-    /// instead, not at the deadline (recorded in <c>docs/release-notes/v2026.11.0.md</c>); the
-    /// abandoned phase is reported as a <see cref="TimeoutException"/> and the pass keeps
+    /// <see cref="Task.WaitAsync(CancellationToken)"/> makes the wait itself end at the deadline,
+    /// and the deadline is <see cref="DeadlineSignal"/> rather than a <see cref="CancellationTokenSource"/>
+    /// timer precisely so that a starved pool cannot defer it: the cancel is performed by a
+    /// dedicated watchdog thread and the wait's continuation is inlined onto it, instead of both
+    /// being queued to a pool that has no worker to give
+    /// (<c>docs/release-notes/v2026.11.0.md</c>, "Deadlines a starved ThreadPool does not honour",
+    /// records the timer-shaped defect this replaced). The abandoned phase is reported as a
+    /// <see cref="TimeoutException"/> and the pass keeps
     /// going with its remaining services, so a hung service cannot hold a disposal or a rollback.
     /// The budget belongs to one service, so "the pass keeps going" includes the services behind
     /// the hung one instead of starving them (review-2026-11-02 Medium 2). A phase whose budget had
@@ -564,18 +570,18 @@ public sealed partial class SvcContainer
     /// </remarks>
     private async Task RunPhaseWithinDeadlineAsync(
         Func<Task> action,
-        CancellationToken deadline,
+        DeadlineSignal? deadline,
         string phase,
         string serviceLabel
     )
     {
-        if (!deadline.CanBeCanceled)
+        if (deadline is null)
         {
             await action().ConfigureAwait(false);
             return;
         }
 
-        if (deadline.IsCancellationRequested)
+        if (deadline.IsExpired)
             throw new TimeoutException(
                 $"The {phase} phase of {serviceLabel} was not run: its {DescribeStopTimeout()} stop budget had already expired."
             );
@@ -583,7 +589,10 @@ public sealed partial class SvcContainer
         var phaseTask = action();
         try
         {
-            await phaseTask.WaitAsync(deadline).ConfigureAwait(false);
+            // The wait is unchanged; only where its cancel comes from is: the deadline's token is
+            // cancelled by the watchdog thread at the budget, so the completion below is inlined
+            // onto that thread instead of queued to a pool that may have no worker to give.
+            await phaseTask.WaitAsync(deadline.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!phaseTask.IsCompleted)
         {

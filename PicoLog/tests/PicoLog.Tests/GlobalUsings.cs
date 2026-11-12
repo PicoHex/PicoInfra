@@ -15,5 +15,6 @@ global using PicoDI.Abs;
 global using PicoLog.Abs;
 global using PicoLog.DI;
 global using TUnit.Assertions.Extensions;
+global using TUnit.Core;
 global using Assert = TUnit.Assertions.Assert;
 global using TestAttribute = TUnit.Core.TestAttribute;

@@ -28,10 +28,13 @@ public sealed class LoggerFactoryOptions
     /// seconds; <see cref="TimeSpan.Zero"/> means wait indefinitely.
     /// </summary>
     /// <remarks>
-    /// The deadline is a <see cref="CancellationTokenSource"/> timer, and a timer callback is
-    /// <see cref="ThreadPool"/> work, so under total pool starvation it is not honoured: the drain
-    /// ends whenever a worker frees up, not at the budget (recorded as a known limitation in
-    /// <c>docs/release-notes/v2026.11.0.md</c>, "Deadlines a starved ThreadPool does not honour").
+    /// The deadline is armed on a dedicated watchdog thread that watches a <see cref="Stopwatch"/>
+    /// (<c>ShutdownDeadline.CancelAt</c>), not on a <see cref="System.Threading.Timer"/>: a timer
+    /// callback is <see cref="ThreadPool"/> work, so under total pool starvation it would not be
+    /// honoured at all (<c>docs/release-notes/v2026.11.0.md</c>, "Deadlines a starved ThreadPool
+    /// does not honour"). The cancellation therefore reaches the in-flight sink write at the budget
+    /// even with every worker occupied; what still needs a worker is the rest of the drain, because
+    /// the pipeline itself is pool work.
     /// </remarks>
     public TimeSpan ShutdownTimeout { get; set; } = TimeSpan.FromSeconds(30);
 

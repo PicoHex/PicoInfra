@@ -25,6 +25,17 @@ public sealed class Scheduler
     private readonly Dictionary<Guid, GraceMode> _graceModes = new();
     private readonly Dictionary<Guid, TimeSpan> _fixedGraces = new();
 
+    /// <summary>
+    /// Budget of each of the two bounded waits in <see cref="StopAsync"/> — the tick-loop join and
+    /// then the in-flight sink drain. Unchanged from the <c>WaitAsync(TimeSpan.FromSeconds(5))</c>
+    /// it replaced: each wait gets its own five seconds, the second one starting after the first.
+    /// </summary>
+    /// <remarks>
+    /// An instance member, not a constant, so a test can shrink the window without affecting a test
+    /// that runs in parallel — the same reason <c>SvcContainer.HostedSvcStopTimeout</c> is one.
+    /// </remarks>
+    internal TimeSpan StopJoinBudget { get; set; } = TimeSpan.FromSeconds(5);
+
     private readonly object _gate = new();
     private IReadOnlyList<JobSnapshot> _snapshot = Array.Empty<JobSnapshot>();
     private DateTimeOffset _lastFlushedUtc = DateTimeOffset.MinValue;
@@ -136,11 +147,17 @@ public sealed class Scheduler
         cts?.Cancel();
         if (loop is not null)
         {
+            // Bounded by a ShutdownDeadline, not by WaitAsync(TimeSpan): a timer is ThreadPool work,
+            // so under a starved pool the join did not end at its 5 s (docs/release-notes/
+            // v2026.11.0.md, "Deadlines a starved ThreadPool does not honour"). The cancel comes
+            // from a dedicated watchdog thread and this continuation is inlined onto it, so the
+            // caller's StopAsync still does not block and the loop is still abandoned at the budget.
+            using var budget = ShutdownDeadline.CancelAt(StopJoinBudget);
             try
             {
-                await loop.WaitAsync(TimeSpan.FromSeconds(5));
+                await loop.WaitAsync(budget.Token);
             }
-            catch (TimeoutException)
+            catch (OperationCanceledException) when (budget.IsExpired)
             {
                 TryLog(Guid.Empty, "Warn", "stop wait timed out");
             }
@@ -155,11 +172,14 @@ public sealed class Scheduler
         }
         if (inFlight.Count > 0)
         {
+            // Its own budget, started after the join above — same 5 s per wait as the
+            // WaitAsync(TimeSpan) spells it replaces. See the join above for why it is not a timer.
+            using var inFlightBudget = ShutdownDeadline.CancelAt(StopJoinBudget);
             try
             {
-                await Task.WhenAll(inFlight).WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.WhenAll(inFlight).WaitAsync(inFlightBudget.Token);
             }
-            catch (TimeoutException)
+            catch (OperationCanceledException) when (inFlightBudget.IsExpired)
             {
                 TryLog(Guid.Empty, "Warn", "in-flight sink wait timed out");
             }

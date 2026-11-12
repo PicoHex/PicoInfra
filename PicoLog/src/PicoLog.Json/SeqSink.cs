@@ -18,8 +18,34 @@ namespace PicoLog;
 /// </remarks>
 public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
 {
+    /// <summary>Batch size that <b>starts a drain</b>. A trigger, not a cap — see <see cref="MaxBufferedEntries"/>.</summary>
     private const int MaxBatchEntries = 100;
+
+    /// <summary>Batch bytes that <b>starts a drain</b>. A trigger, not a cap — see <see cref="MaxBufferedBytes"/>.</summary>
     private const int MaxBatchBytes = 256 * 1024;
+
+    /// <summary>
+    /// Hard cap on the buffered entries: 20 batches, i.e. the in-flight one plus the 19 a stalled
+    /// flush tick can leave queued behind it. Past it the OLDEST entries are dropped.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="MaxBatchEntries"/> and <see cref="MaxBatchBytes"/> are trigger thresholds: they
+    /// start a drain, and the only appender (<see cref="BufferEntries"/>) used to neither drop nor
+    /// refuse, so a flush tick that could not run (a starved <see cref="ThreadPool"/>, a stalled
+    /// HTTP call) let <see cref="_buffer"/> grow without bound — memory growth, and every entry in
+    /// it lost if the process exits. This is the bound, and it is the policy the pipeline queue
+    /// already has: drop-oldest, keep the newest, never block and never throw on the write path.
+    /// </remarks>
+    private const int MaxBufferedEntries = MaxBatchEntries * 20;
+
+    /// <summary>
+    /// Hard cap on the buffered bytes, the same 20x factor so the two dimensions trip together.
+    /// </summary>
+    /// <remarks>
+    /// Sized as a memory ceiling rather than a delivery budget: 5 MiB of buffered log entries is
+    /// already evidence that nothing is draining, so holding more only delays the loss.
+    /// </remarks>
+    private const long MaxBufferedBytes = (long)MaxBatchBytes * 20;
     private static readonly TimeSpan DefaultFlushInterval = TimeSpan.FromSeconds(2);
     private const int DefaultMaxRetries = 3;
     private const int DefaultRetryBaseDelayMs = 100;
@@ -56,6 +82,22 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
     /// <summary>TEST HOOK — writes rejected because the sink was already closed.
     /// Instance-scoped so tests do not observe the process-wide metric counter.</summary>
     internal long RejectedAfterClose;
+
+    /// <summary>
+    /// TEST HOOK — entries dropped because the buffer was at <see cref="MaxBufferedEntries"/> /
+    /// <see cref="MaxBufferedBytes"/>.
+    /// </summary>
+    /// <remarks>
+    /// Instance-scoped, like <see cref="RejectedAfterClose"/>. The public meter cannot carry this
+    /// one: the only "an entry was dropped" instrument is
+    /// <c>PicoLogMetrics.RecordDroppedEntry</c>, which is <c>internal</c> to the <c>PicoLog</c>
+    /// assembly this sink does not live in, and the public counterpart on the meter
+    /// (<c>RecordRejectedAfterShutdown</c>) means "rejected after shutdown" — a different event.
+    /// Making the drop recorder public would be a shipped-API change, so the drop is counted here
+    /// and traced instead; a caller observes it as "the oldest entries never reached the server"
+    /// plus this counter.
+    /// </remarks>
+    internal long DroppedByCap;
 
     public long FailureCount => Interlocked.Read(ref _failureCount);
     public DateTimeOffset? LastFailureTime =>
@@ -189,9 +231,52 @@ public sealed class SeqSink : IBatchingLogSink, IFlushableLogSink
                 _bufferBytes += EstimateEntryBytes(entry);
             }
 
+            DropOldestPastTheCap();
+
             if (_buffer.Count >= MaxBatchEntries || _bufferBytes >= MaxBatchBytes)
                 _ = SafeDrainAsync();
         }
+    }
+
+    /// <summary>
+    /// Drops the OLDEST buffered entries until the buffer is inside
+    /// <see cref="MaxBufferedEntries"/> / <see cref="MaxBufferedBytes"/>. Called under
+    /// <see cref="_bufferLock"/> by the only appender.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Oldest first because the newest entries are the ones that explain whatever is happening now —
+    /// the same choice the pipeline queue makes when it evicts. The newest entry is always kept: one
+    /// entry that is bigger than the whole byte cap cannot be split, and dropping it would mean the
+    /// sink silently refuses to buffer at all, which is a different policy.
+    /// </para>
+    /// <para>
+    /// What a caller observes when this trips: nothing on the write path — <see cref="WriteAsync"/>
+    /// and <see cref="WriteBatchAsync"/> still complete, never block and never throw — and on the
+    /// wire, the oldest entries of the window simply never arrive. The evidence is
+    /// <see cref="DroppedByCap"/> (plus a trace line), which is what a test asserts on.
+    /// </para>
+    /// </remarks>
+    private void DropOldestPastTheCap()
+    {
+        var drop = 0;
+        while (
+            _buffer.Count - drop > 1
+            && (_buffer.Count - drop > MaxBufferedEntries || _bufferBytes > MaxBufferedBytes)
+        )
+        {
+            _bufferBytes -= EstimateEntryBytes(_buffer[drop]);
+            drop++;
+        }
+
+        if (drop == 0)
+            return;
+
+        _buffer.RemoveRange(0, drop);
+        DroppedByCap += drop;
+        Trace.WriteLine(
+            $"[SeqSink] buffer cap tripped: dropped {drop} oldest entr(y/ies); {DroppedByCap} dropped in total"
+        );
     }
 
     /// <summary>
