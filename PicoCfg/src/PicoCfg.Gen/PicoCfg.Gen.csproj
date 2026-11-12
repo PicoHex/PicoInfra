@@ -38,17 +38,26 @@
     <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
   </ItemGroup>
 
-  <!-- RS2008 is satisfied by the DECLARED item, not by the file: deleting the tracking file
-       still builds clean, and a wrong or missing row produces no diagnostic at all (measured).
-       This turns that silent case into a build error, so the tracking cannot rot into a lie. -->
+  <!-- NOTHING in the build reads these two files. Measured: Microsoft.CodeAnalysis.Analyzers
+       arrives here as a buildTransitive asset only (project.assets.json has no `analyzers`
+       entry for it), so the release-tracking analyzer never loads and RS2008 can never fire -
+       not for a missing file, a deleted row, or a reworded rule. Two lanes disagreed on this;
+       the asset graph settles it. So the tracking is a review record, and these targets are the
+       only machine-enforced half: they turn a deleted file into a build error instead of
+       letting the record rot into a lie. Enforcing the rows themselves needs the analyzer
+       as a real `analyzers` asset (docs/releasing.md says what that would cost). -->
   <Target Name="_RequireAnalyzerReleasesFile" BeforeTargets="CoreCompile">
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Unshipped.md')"
-           Text="AnalyzerReleases.Unshipped.md is missing while this generator still declares it as an AdditionalFiles input. RS2008 does not notice an absent file, so this target does - restore the file or remove the AdditionalFiles item." />
+    <Error
+      Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Unshipped.md')"
+      Text="AnalyzerReleases.Unshipped.md is missing while this generator still declares it as an AdditionalFiles input. Nothing in the build reads this file (the release-tracking analyzer is not loaded here), so this target is the only thing that notices - restore it or remove the AdditionalFiles item."
+    />
     <!-- Same failure, other half: without the file the record of what already shipped to consumers
          is gone, and this target would guard one file of a two-file pair. No RS diagnostic fills
          that gap - this project gets Microsoft.CodeAnalysis.Analyzers as a `build` asset only, so
          the release-tracking analyzer never loads (see docs/releasing.md). -->
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Shipped.md')"
-           Text="AnalyzerReleases.Shipped.md is missing while this generator still declares it as an AdditionalFiles input. Without it every shipped rule reads as unshipped and edits to already-published rule IDs stop being reported - restore the file, or delete the AdditionalFiles item with a reason." />
+    <Error
+      Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Shipped.md')"
+      Text="AnalyzerReleases.Shipped.md is missing while this generator still declares it as an AdditionalFiles input. Without it every shipped rule reads as unshipped and edits to already-published rule IDs stop being reported - restore the file, or delete the AdditionalFiles item with a reason."
+    />
   </Target>
 </Project>
