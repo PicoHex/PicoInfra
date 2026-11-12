@@ -11,7 +11,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="11.0.0" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
-    <PackageVersion Include="PicoBench" Version="2026.3.0" />
+    <PackageVersion Include="PicoBench" Version="2026.4.0" />
     <PackageVersion Include="PicoDI" Version="$(Version)" />
     <PackageVersion Include="PicoDI.Abs" Version="$(Version)" />
     <PackageVersion Include="PicoCfg" Version="$(Version)" />
@@ -30,10 +30,10 @@
     <PackageVersion Include="PicoCfg.Yaml" Version="$(Version)" />
     <PackageVersion Include="PicoLog.DI" Version="$(Version)" />
     <PackageVersion Include="PicoLog.Json" Version="$(Version)" />
-    <PackageVersion Include="PicoJetson" Version="2026.13.1" />
-    <PackageVersion Include="PicoYaml" Version="2026.13.1" />
-    <PackageVersion Include="PicoIni" Version="2026.13.1" />
-    <PackageVersion Include="PicoToml" Version="2026.13.1" />
+    <PackageVersion Include="PicoJetson" Version="2026.13.3" />
+    <PackageVersion Include="PicoYaml" Version="2026.13.3" />
+    <PackageVersion Include="PicoIni" Version="2026.13.3" />
+    <PackageVersion Include="PicoToml" Version="2026.13.3" />
     <PackageVersion Include="TUnit" Version="1.83.8" />
     <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.5.3" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.5.3" />
