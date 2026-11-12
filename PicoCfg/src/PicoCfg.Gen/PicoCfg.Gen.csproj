@@ -33,4 +33,12 @@
          change the analyzer assembly that ships inside the .Abs package. -->
     <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
   </ItemGroup>
+
+  <!-- RS2008 is satisfied by the DECLARED item, not by the file: deleting the tracking file
+       still builds clean, and a wrong or missing row produces no diagnostic at all (measured).
+       This turns that silent case into a build error, so the tracking cannot rot into a lie. -->
+  <Target Name="_RequireAnalyzerReleasesFile" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/AnalyzerReleases.Unshipped.md')"
+           Text="AnalyzerReleases.Unshipped.md is missing while this generator still declares it as an AdditionalFiles input. RS2008 does not notice an absent file, so this target does - restore the file or remove the AdditionalFiles item." />
+  </Target>
 </Project>
