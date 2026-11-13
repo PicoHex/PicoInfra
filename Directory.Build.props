@@ -95,6 +95,34 @@
     <_PicoParentFolder>$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('$(MSBuildProjectDirectory)'))))</_PicoParentFolder>
   </PropertyGroup>
 
+  <!-- ===== Lock files =====
+
+       Two conditions, both load-bearing.
+
+       1. UseProjectReferences. That switch rewrites a sibling PackageReference
+          into a ProjectReference (see the per-csproj ItemGroups), so the two
+          modes resolve two genuinely different graphs and one packages.lock.json
+          cannot describe both. Evaluated empirically: a lock file written under
+          UseProjectReferences=true is rejected by
+          `-p:UseProjectReferences=false -p:RestoreLockedMode=true` with
+          "The package references have changed for net10.0 ... PicoDI.Abs".
+          Lock files therefore cover the inner-loop / CI graph, which is the only
+          one that can restore in a plain checkout - the PackageReference graph
+          needs the sibling packages published at $(Version), which only the
+          release pipeline supplies via -p:Version=<tag>.
+
+       2. Not samples/benchmarks/scripts. Every project there is an AOT
+          executable, and for those the SDK adds an implicit RID to restore, so
+          the lock file gains a machine-specific section ("net10.0/win-x64" when
+          written on Windows). CI is a win/linux/macos/arm matrix, so committing
+          those would make every non-Windows restore fail in locked mode. They
+          are left unlocked; the library and test graphs - the ones that
+          actually ship - are locked.
+  -->
+  <PropertyGroup Condition="'$(UseProjectReferences)' == 'true' and '$(_PicoParentFolder)' != 'samples' and '$(_PicoParentFolder)' != 'benchmarks' and '$(_PicoParentFolder)' != 'scripts'">
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(_PicoParentFolder)' == 'tests'">
     <PublishAot>false</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>
