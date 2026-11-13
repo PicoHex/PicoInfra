@@ -1,17 +1,32 @@
 <Project>
+  <!--
+    Central Package Management.
+
+    Floating rule (one rule, no exceptions): float ONLY the segment a package
+    author promises will never break - the last one.
+      first-party Pico*   <year>.<x>.<y>  ->  <year>.<x>.*
+      official / third-party  x.y.z      ->  x.y.*
+    `Version="$(Version)"` entries are the 18 packages this repo publishes
+    itself; the release pipeline owns that number, so they are exempt.
+
+    NuGet refuses floating versions under CPM unless
+    CentralPackageFloatingVersionsEnabled is true (NU1011 otherwise), so that
+    switch is part of the rule, not an optional extra.
+  -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="11.0.0" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.100" />
-    <PackageVersion Include="PicoBench" Version="2026.4.0" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="11.0.*" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.*" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="11.0.*" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="11.0.*" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.*" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="11.0.*" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="11.0.*" />
+    <PackageVersion Include="PicoBench" Version="2026.4.*" />
     <PackageVersion Include="PicoDI" Version="$(Version)" />
     <PackageVersion Include="PicoDI.Abs" Version="$(Version)" />
     <PackageVersion Include="PicoCfg" Version="$(Version)" />
@@ -30,12 +45,12 @@
     <PackageVersion Include="PicoCfg.Yaml" Version="$(Version)" />
     <PackageVersion Include="PicoLog.DI" Version="$(Version)" />
     <PackageVersion Include="PicoLog.Json" Version="$(Version)" />
-    <PackageVersion Include="PicoJetson" Version="2026.13.3" />
-    <PackageVersion Include="PicoYaml" Version="2026.13.3" />
-    <PackageVersion Include="PicoIni" Version="2026.13.3" />
-    <PackageVersion Include="PicoToml" Version="2026.13.3" />
-    <PackageVersion Include="TUnit" Version="1.83.8" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.5.3" />
-    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.5.3" />
+    <PackageVersion Include="PicoJetson" Version="2026.13.*" />
+    <PackageVersion Include="PicoYaml" Version="2026.13.*" />
+    <PackageVersion Include="PicoIni" Version="2026.13.*" />
+    <PackageVersion Include="PicoToml" Version="2026.13.*" />
+    <PackageVersion Include="TUnit" Version="1.83.*" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.HangDump" Version="2.5.*" />
+    <PackageVersion Include="Microsoft.Testing.Extensions.CrashDump" Version="2.5.*" />
   </ItemGroup>
 </Project>
