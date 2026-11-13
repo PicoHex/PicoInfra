@@ -62,6 +62,10 @@ await scheduler.StopAsync();
   inside the framework — the next slot is the natural retry.
 - **Persistence/recovery**: host-owned. Recovery = re-register (overwrite
   semantics); missed slots are handled by the grace policy.
+- **Stop**: `StopAsync()` joins the tick loop, then drains in-flight sinks,
+  each wait on its own 5 s budget; both budgets hold under a starved
+  `ThreadPool` (armed on a watchdog thread, not a `Timer`), and an expired one
+  logs a warning instead of hanging the caller.
 
 ## Cron Dialect (language-completeness contract)
 
