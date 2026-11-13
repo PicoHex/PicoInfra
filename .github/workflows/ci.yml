@@ -288,7 +288,7 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -p:UseProjectReferences=true
+          dotnet restore PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
 
       - name: Build
         run: dotnet build PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj --configuration Release --no-restore -p:UseProjectReferences=true
@@ -405,13 +405,13 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.DI.Tests/PicoCfg.DI.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.Json.Tests/PicoCfg.Json.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.Yaml.Tests/PicoCfg.Yaml.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.Ini.Tests/PicoCfg.Ini.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoCfg/tests/PicoCfg.Toml.Tests/PicoCfg.Toml.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.DI.Tests/PicoCfg.DI.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Json.Tests/PicoCfg.Json.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Yaml.Tests/PicoCfg.Yaml.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Ini.Tests/PicoCfg.Ini.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Toml.Tests/PicoCfg.Toml.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
 
       - name: Build
         run: |
@@ -584,8 +584,8 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj -p:UseProjectReferences=true
-          dotnet restore PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
 
       - name: Build
         run: |
@@ -738,7 +738,7 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
 
       - name: Build
         run: |
@@ -857,7 +857,7 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
 
       - name: Build
         run: |
@@ -973,7 +973,7 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj
+          dotnet restore PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj -p:RestoreLockedMode=true
 
       - name: Build
         run: dotnet build PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-restore

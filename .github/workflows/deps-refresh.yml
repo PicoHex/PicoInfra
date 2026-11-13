@@ -1,0 +1,110 @@
+name: Refresh package lock files
+
+# Regenerates every packages.lock.json and opens a PR when the resolved graph
+# moved. This job is what keeps `RestoreLockedMode=true` in ci.yml honest: without
+# it, a lock that had fallen behind the feeds would only ever surface as a red CI
+# run on an unrelated PR, with no obvious way to fix it.
+#
+# `--force-evaluate` is the whole point. A plain `dotnet restore` honours the
+# existing lock and would resolve to the same versions forever; locked mode (the
+# CI default) refuses to update it at all. Only this flag re-resolves.
+#
+# Weekly, not daily: the lock files exist to catch silent transitive drift, not
+# to chase same-day patches. Security advisories are already handled by NuGet
+# audit inside the normal build, and failing fast there is the right response.
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: deps-refresh
+  # A refresh is cheap and idempotent, so overlap costs nothing but a branch
+  # race. Never cancel half-way: that can leave the branch pushed with no PR.
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 10.0.x
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  refresh:
+    name: Regenerate lock files
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the lease check in the push below compares against the
+          # remote-tracking ref, which a shallow single-branch clone may omit.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # Project-reference mode, the same graph CI restores - lock files are only
+      # generated for that mode (see the note in Directory.Build.props).
+      - name: Regenerate lock files
+        run: dotnet restore PicoInfra.slnx --force-evaluate
+
+      - name: Detect drift
+        id: drift
+        run: |
+          set -euo pipefail
+          if git status --porcelain | grep -q 'packages\.lock\.json'; then
+            git --no-pager diff --stat
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "All lock files are already current."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the refresh PR
+        if: steps.drift.outputs.changed == 'true'
+        env:
+          # A PAT lets GitHub start CI on the PR (workflow runs triggered by
+          # GITHUB_TOKEN are suppressed by design). Falls back to GITHUB_TOKEN,
+          # which still opens the PR - it just arrives without checks attached.
+          GH_TOKEN: ${{ secrets.DEPS_REFRESH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          branch='deps/lock-refresh'
+
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$branch"
+
+          # Only lock files: a dependency refresh must never smuggle a source
+          # change into the PR, so `git add -A` is deliberately not used.
+          find . -name packages.lock.json -not -path '*/obj/*' -print0 \
+            | xargs -0 -r git add --
+          git diff --cached --quiet && { echo "Nothing staged - aborting."; exit 0; }
+
+          git commit -m 'build(deps): refresh package lock files'
+
+          # Give the lease check a ref to compare against when the branch exists.
+          git fetch origin "$branch" --depth=1 2>/dev/null || true
+          git push --force-with-lease origin "$branch"
+
+          cat > /tmp/pr-body.md <<'BODY'
+          The resolved dependency graph moved since the committed `packages.lock.json`
+          files were last evaluated by `dotnet restore --force-evaluate`.
+
+          Review the diff for unexpected major or patch jumps before merging: a lock
+          bump is a real dependency change and ships in the next release.
+          BODY
+
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "Updated the existing PR for $branch."
+          else
+            gh pr create --base main --head "$branch" \
+              --title 'build(deps): refresh package lock files' \
+              --body-file /tmp/pr-body.md
+          fi
