@@ -152,12 +152,8 @@
     <NoWarn Condition="'$(IsPackable)' != 'true'">$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
-  <!-- Symbol packages (snupkg) -->
-  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <PackageReleaseNotes>https://github.com/PicoHex/PicoInfra/releases</PackageReleaseNotes>
-  </PropertyGroup>
+  <!-- Symbol packages (snupkg) are declared in Directory.Build.targets - the
+       guard on IsPackable cannot be evaluated in this file. See the note there. -->
 
   <!-- SourceLink for source-level debugging -->
   <ItemGroup Condition="'$(IsPackable)' == 'true'">

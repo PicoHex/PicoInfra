@@ -1,0 +1,387 @@
+name: Backfill symbol packages
+
+# Manually triggered repair job for a release that shipped without symbols.
+#
+# v2026.11.0 published 20 packages and zero symbol packages, and a NuGet version
+# is immutable once it exists: the only way to complete that release is to push
+# the .snupkg files afterwards, at the exact version already on the feed. That is
+# what this workflow does - it re-packs the tag, keeps only the symbol packages,
+# and pushes nothing else.
+#
+# Deliberately NOT a branch of release.yml. That path is production-validated and
+# a regression in it costs a release; a repair that runs by hand once per broken
+# release belongs in its own file, where it cannot fire on a tag push.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to backfill symbol packages for'
+        required: true
+        type: string
+        default: 'v2026.11.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-symbols-${{ inputs.tag }}
+  # Never cancel half-done: a partial backfill is legal but must be completed,
+  # and the push loop is idempotent (`--skip-duplicate`), so a re-run resumes.
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 10.0.x
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+
+jobs:
+  backfill:
+    name: Backfill symbols for ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same gate as `publish` in release.yml: the environment holds the
+    # organization-level NUGET_USER secret and the OIDC trust for nuget.org.
+    # `id-token: write` is what lets the job mint the identity token that
+    # NuGet/login trades for a short-lived API key.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # The tag, not the branch. The bits on nuget.org came from this tree, and a
+      # symbol package is only useful if it describes those exact bits.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: |
+          tag="${{ inputs.tag }}"
+          if [[ ! "$tag" =~ ^v[0-9] ]]; then
+            echo "::error::Input tag '$tag' is not a v-prefixed version tag (expected e.g. v2026.11.0)."
+            exit 1
+          fi
+          version="${tag#v}"
+          if [[ -z "$version" ]]; then
+            echo "::error::Input tag '$tag' has no version after the leading 'v'."
+            exit 1
+          fi
+          # The checkout resolved `refs/tags/<tag>` - a tag that did not exist
+          # would have failed there. Confirm we are ON it, not on a branch that
+          # happens to share the name.
+          head_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "refs/tags/${tag}^{commit}")"
+          if [[ "$head_sha" != "$tag_sha" ]]; then
+            echo "::error::HEAD ($head_sha) is not tag '$tag' ($tag_sha)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Packing $tag as version $version (commit $head_sha)."
+
+      # Packs exactly what `pack` in release.yml packs, in the same three phases and
+      # the same order (abstractions first with project references so the bundled
+      # generators travel, then consumers against the staged artifacts/nupkg feed,
+      # then the rest). Two deliberate differences:
+      #
+      # 1. No tests. Safe HERE and only here: this tag is immutable and its bits are
+      #    already published, so a test result cannot change anything - we re-emit
+      #    files for a version that already exists, from the tree that produced it.
+      #    A RELEASE cannot skip them: it mints a new immutable version for the
+      #    first time, and a red test run there is the last moment the mistake can
+      #    be stopped before it is permanent on nuget.org.
+      #
+      # 2. Symbols are forced on the command line. The block in
+      #    Directory.Build.props that sets IncludeSymbols/SymbolPackageFormat is
+      #    gated on `'$(IsPackable)' == 'true'`, but IsPackable is still unset while
+      #    Directory.Build.props is evaluated (the csproj body that sets it is read
+      #    afterwards), so that block never fires and a plain `dotnet pack` emits no
+      #    .snupkg at all - which is the real reason 2026.11.0 has none. This
+      #    workflow checks out a tag cut before the bug was found, so the fix cannot
+      #    be in the tree it builds; it passes the two properties explicitly instead.
+      - name: Pack packages (no tests, symbols forced on)
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NUPKG_DIR="$GITHUB_WORKSPACE/artifacts/nupkg"
+          rm -rf ./artifacts/nupkg
+          mkdir -p ./artifacts/nupkg
+
+          SYMBOLS=(-p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg)
+
+          # ---- Phase 1: Abstractions (bundled generators via UseProjectReferences=true) ----
+          # PicoDI.Abs must be packed first because PicoAop.Abs depends on it
+          dotnet pack PicoDI/src/PicoDI.Abs/PicoDI.Abs.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=true \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoAop/src/PicoAop.Abs/PicoAop.Abs.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=true \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+          # ---- PicoSchedule (standalone, zero dependencies) ----
+          dotnet pack PicoSchedule/src/PicoSchedule/PicoSchedule.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoMediator/src/PicoMediator.Abs/PicoMediator.Abs.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=true \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg.Abs/PicoCfg.Abs.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=true \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoLog/src/PicoLog.Abs/PicoLog.Abs.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=true \
+            "${SYMBOLS[@]}"
+
+          # ---- Phase 2: Consumer libraries (depend on abstractions from Phase 1) ----
+          dotnet pack PicoAop/src/PicoAop.DI/PicoAop.DI.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoMediator/src/PicoMediator/PicoMediator.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoMediator/src/PicoMediator.DI/PicoMediator.DI.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoDI/src/PicoDI/PicoDI.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg/PicoCfg.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg.DI/PicoCfg.DI.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          # ---- Phase 3: SerDe (depend on Phase 1 abstractions + Phase 2 consumer libs) ----
+          dotnet pack PicoCfg/src/PicoCfg.Json/PicoCfg.Json.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg.Yaml/PicoCfg.Yaml.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg.Ini/PicoCfg.Ini.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoCfg/src/PicoCfg.Toml/PicoCfg.Toml.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoLog/src/PicoLog/PicoLog.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoLog/src/PicoLog.DI/PicoLog.DI.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoLog/src/PicoLog.Json/PicoLog.Json.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          dotnet pack PicoAop/src/PicoAop/PicoAop.csproj \
+            --configuration Release \
+            --output "$NUPKG_DIR" \
+            -p:Version="$VERSION" \
+            -p:UseProjectReferences=false \
+            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
+            "${SYMBOLS[@]}"
+
+          echo "Pack finished: $(find "$NUPKG_DIR" -name '*.nupkg' ! -name '*.snupkg' | wc -l) package(s), $(find "$NUPKG_DIR" -name '*.snupkg' | wc -l) symbol package(s)."
+
+      - name: NuGet login (OIDC → temp API key)
+        # Same wiring, verbatim, as `publish` in release.yml. The secret is
+        # organization-level and resolved fine during the 2026.11.0 run
+        # ("Successfully exchanged OIDC token for NuGet API key.").
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push symbol packages only
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ inputs.tag }}"
+          shopt -s nullglob
+
+          packages=()
+          for file in *.nupkg; do
+            # `*.nupkg` cannot match `*.snupkg` - the suffixes differ in the
+            # character before the dot - so this loop is packages-only. The legacy
+            # `*.symbols.nupkg` archive format is skipped by hand because
+            # nuget.org rejects it on the packages endpoint.
+            if [[ "$file" == *.symbols.nupkg ]]; then
+              continue
+            fi
+            packages+=("$file")
+          done
+
+          symbols=()
+          for file in *.snupkg; do
+            symbols+=("$file")
+          done
+
+          # An empty symbol set is the whole failure this workflow exists to
+          # repair, so it is a hard error - not a warning, not a no-op.
+          if [[ ${#symbols[@]} -eq 0 ]]; then
+            echo "::error::No .snupkg files in $(pwd) - the pack at '$TAG' produced no symbol packages, so there is nothing to backfill."
+            exit 1
+          fi
+
+          # ---- Guard: a .nupkg must never reach the push loop ----
+          # Those versions already exist on the feed; pushing one is a duplicate at
+          # best and a rejection at worst, and neither is what this workflow
+          # promises. Assert the invariant instead of trusting the glob.
+          for file in "${symbols[@]}"; do
+            if [[ "$file" == *.nupkg ]]; then
+              echo "::error::Refusing to push '$file': that is a package, not a symbol package. This workflow pushes .snupkg only."
+              exit 1
+            fi
+            if [[ "$file" != *.snupkg ]]; then
+              echo "::error::Refusing to push '$file': not a .snupkg."
+              exit 1
+            fi
+            if [[ "$file" != *".${VERSION}.snupkg" ]]; then
+              echo "::error::Refusing to push '$file': it does not carry the backfilled version $VERSION."
+              exit 1
+            fi
+          done
+          for file in "${packages[@]}"; do
+            if [[ "$file" == *.snupkg ]]; then
+              echo "::error::Internal: symbol package '$file' leaked into the package list."
+              exit 1
+            fi
+          done
+
+          echo "Staged in $(pwd): ${#packages[@]} package(s), ${#symbols[@]} symbol package(s)."
+          echo "Target version: $VERSION (tag $TAG)"
+
+          pushed=0
+          skipped=0
+          for file in "${symbols[@]}"; do
+            id="${file%".${VERSION}.snupkg"}"
+            echo "::group::push $id $VERSION ($file)"
+            set +e
+            out=$(dotnet nuget push "$file" \
+              --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            echo "::endgroup::"
+            if [[ $rc -ne 0 ]]; then
+              echo "::error::Failed to push symbol package '$file' (exit $rc)."
+              exit $rc
+            fi
+            # `--skip-duplicate` turns "already published" into a warning with exit
+            # 0; count it so the summary separates real work from a re-run.
+            if grep -qiE 'already exists|409|conflict' <<<"$out"; then
+              echo "  $id $VERSION: already on the feed, skipped"
+              skipped=$((skipped + 1))
+            else
+              echo "  $id $VERSION: pushed"
+              pushed=$((pushed + 1))
+            fi
+          done
+
+          if [[ $((pushed + skipped)) -ne ${#symbols[@]} ]]; then
+            echo "::error::Accounting mismatch: $pushed pushed + $skipped skipped != ${#symbols[@]} symbol packages."
+            exit 1
+          fi
+
+          echo "$pushed symbol packages pushed, $skipped skipped"
+          {
+            echo "### Symbol backfill for \`$TAG\`"
+            echo ""
+            echo "- version: \`$VERSION\`"
+            echo "- **$pushed symbol packages pushed, $skipped skipped**"
+            echo "- packages intentionally not pushed: ${#packages[@]} (already on the feed)"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
