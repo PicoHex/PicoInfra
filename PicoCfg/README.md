@@ -166,6 +166,12 @@ _ = Task.Run(async () =>
 });
 ```
 
+`ICfgRoot` is `IAsyncDisposable`, and `DisposeAsync` waits for an in-flight `ReloadAsync` to settle
+before it disposes the providers. That wait is bounded — 10 s, then a 5 s second attempt — and it is
+spent on the **calling thread**, so a provider that ignores its `CancellationToken` can block
+`await root.DisposeAsync()` (or `await using`) for up to those 15 s; on a cooperative shutdown it is
+microseconds. If you implement `ICfgProvider`, honour the token `ReloadAsync` is given.
+
 ## Source-Generated Binding
 
 The source generator is **embedded in `PicoCfg.Abs`** (no extra package). Call `CfgBind.Bind<T>` — the generator emits binding delegates at compile time.

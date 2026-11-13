@@ -36,6 +36,46 @@ and do not infer it from a date.
 | `artifacts/nupkg` | The local folder feed. Restored automatically when the folder exists (`Directory.Build.props` adds it to `RestoreAdditionalProjectSources`). It exists because nuget.org needs minutes to index a new version while sibling repos (PicoActor, PicoNode, PicoAgent, …) restore by `PackageReference`. Same bits as CI, served sooner. |
 | `tools/release-build.sh` | Local verification build: refuses a branch that is not `main` (`exit 2`) and a dirty tree (`exit 3`), prints the exact `HEAD` it built from, and writes artifacts **outside** the repository (`OUT`, default `$TMPDIR/rel-<short sha>`). Its job is proof of provenance, not publication. |
 
+## Symbols — `pack` emits a `.snupkg` per package, and a release that shipped without one is repaired by hand
+
+`IncludeSymbols` / `SymbolPackageFormat=snupkg` are declared in `Directory.Build.targets:14-18`, not
+in `Directory.Build.props`, and which of the two files they live in *is* the point: the block's
+condition is `'$(IsPackable)' == 'true'`, properties evaluate in document order, and while
+`Directory.Build.props` is being read `IsPackable` is still the `false` that the same file sets at
+`:6` — the csproj body that sets it to `true` is read *afterwards*. In `.props` the condition saw
+`false` for every project, the block silently never ran, and a plain `dotnet pack` emitted no
+`.snupkg` at all: that is the real reason `v2026.11.0` shipped 20 packages and zero symbol packages,
+and no publish loop could have pushed symbols that were never produced. Item groups were never
+affected — MSBuild evaluates items in a later pass with the final property values — which is why the
+SourceLink/icon `ItemGroup` under the same condition stayed in `.props`, and why
+`AotOptimizationLevel` in the same `.targets` file already followed this rule.
+
+Two probes answer "did the block fire". `dotnet msbuild PicoDI/src/PicoDI.Abs/PicoDI.Abs.csproj
+-getProperty:IncludeSymbols -getProperty:SymbolPackageFormat` reports `true` / `snupkg` for a
+packable project and empty / `symbols.nupkg` (the NuGet default) for `PicoLog.Tests`; and a
+`dotnet pack` with no symbol property on the command line now leaves a `.snupkg` beside each
+`.nupkg`.
+
+A release that shipped without symbols is repaired by `.github/workflows/backfill-symbols.yml`. A
+NuGet version is immutable, so the only repair is pushing `.snupkg` files at the version already on
+the feed: it is `workflow_dispatch`-only with a `tag` input defaulting to `v2026.11.0`, it proves
+`HEAD` *is* that tag (a missing tag already fails the checkout; a branch of the same name must not
+pass), it re-packs the same 20 projects in `release.yml`'s three phases with the two symbol
+properties forced on the command line — the tag it builds may predate this fix, so it cannot rely on
+the tree — then pushes **only** `.snupkg` with `--skip-duplicate`, and fails on a `.nupkg`, a foreign
+version or an empty set. It is deliberately not a branch of `release.yml`: that path is
+production-validated and a regression there costs a release.
+
+```shell
+gh workflow run backfill-symbols.yml -f tag=v2026.11.0
+```
+
+**Nothing gates it.** `release.yml` only *reports* the symbol count — `Publishing N package(s) and M
+symbol package(s)` (`:304`) and the same line after the pushes (`:323`) — so a release can ship 20
+packages and 0 `.snupkg` and stay green. The fix is in the pack, not in a gate. The backfill itself
+has not been run for `v2026.11.0`: nothing in this repository can verify a push to nuget.org, so a
+consumer of that version gets source-stepping only once someone dispatches it.
+
 ## Analyzer release tracking — the `Shipped` half is per release, the `Unshipped` half is per commit
 
 Four generators ship rule IDs a consumer build can hit, and all four now declare an

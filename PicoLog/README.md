@@ -229,6 +229,14 @@ reference — `using PicoLog;` and `new SeqSink(...)` still compile. An assembly
 compiled against the old `PicoLog` cannot be reused, though: there is no type forwarder and no
 `[Obsolete]` stub, so it must be recompiled against `PicoLog.Json` (see [Package move](#packages)).
 
+`SeqSink`'s own buffering is bounded. 100 entries or 256 KiB **start a drain** (`MaxBatchEntries` /
+`MaxBatchBytes`) — triggers, not caps — and the buffer itself is capped at 20 batches: **2000
+entries or 5 MiB**, oldest dropped first. A flush tick that could not run (a starved pool, a stalled
+HTTP call) used to grow that buffer without bound; now it loses the **start** of its window instead,
+and the newest entry is always kept. Nothing changes on the write path — `WriteAsync` /
+`WriteBatchAsync` still complete, never block and never throw — so what a consumer observes is a hole
+at the beginning of a stall, with no knob and no public counter to watch for it.
+
 Both sinks write through PicoJetson's `JsonWriter`, so the batch body is UTF-8 from the first byte:
 no `StringBuilder`, no per-entry string, and no hand-rolled escaper. Measured on the 100-entry
 batch of `SeqSinkWireFormatTests` (JIT, Release, `GC.GetAllocatedBytesForCurrentThread`, median of
