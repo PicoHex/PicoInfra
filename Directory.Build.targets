@@ -1,5 +1,23 @@
 <Project>
   <!--
+    Symbol packages (snupkg). MUST live in this .targets file, not in
+    Directory.Build.props: the guard is '$(IsPackable)' == 'true', and IsPackable
+    is still the default 'false' set in Directory.Build.props while that file is
+    being evaluated - the csproj body that sets it to true is read afterwards.
+    Properties evaluate in document order, so the block used to sit in
+    Directory.Build.props and silently never fired: a plain `dotnet pack` emitted
+    no .snupkg at all, which is why v2026.11.0 shipped 20 packages with zero
+    symbols. Item groups are unaffected - MSBuild evaluates items in a later pass
+    with the final property values - so the SourceLink/icon ItemGroup in
+    Directory.Build.props does fire. Same rule as AotOptimizationLevel below.
+  -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReleaseNotes>https://github.com/PicoHex/PicoInfra/releases</PackageReleaseNotes>
+  </PropertyGroup>
+
+  <!--
     Aggressive AOT tier implementation. Must live in this .targets file (not
     Directory.Build.props): a csproj-level <AotOptimizationLevel> is evaluated
     after Directory.Build.props, so a condition there never sees the override.
