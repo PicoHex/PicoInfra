@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/picohex.svg" alt="PicoHex" width="120"></p>
+
 # PicoInfra
 
 **AOT-First Universal Minimal Infrastructure for .NET**
