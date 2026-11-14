@@ -1,0 +1,240 @@
+# Upstream watch - REPORT ONLY. This is R10 of the dependency policy.
+#
+# Directory.Packages.props floats the LAST segment of every version (first-party
+# `<year>.<x>.*`, official / third-party `<x>.<y>.*`), and deps-refresh.yml is what
+# lets that float actually move. But deps-refresh runs
+# `dotnet restore --force-evaluate`, which re-resolves the graph INSIDE each
+# declared range and never outside it: `2026.13.*` can never resolve `2026.14.0`,
+# `5.9.*` can never resolve `5.10.0`. The band itself only moves when a person
+# moves it (the policy is "adapt our code to upstream", never "hold upstream
+# back"), so the refresh PR is structurally silent about exactly the move a human
+# must make.
+#
+# That silence is the hole this workflow fills. It is not a red build anywhere:
+# nothing else in the pipeline would ever say "upstream left the band", so without
+# this job the event is invisible until somebody thinks to look.
+#
+# What it does: for every `<PackageVersion>` in Directory.Packages.props it asks
+# nuget.org for the latest STABLE version and compares the declared band - the
+# segments before the `*`. Same band is fine (the patch belongs to deps-refresh);
+# a different, higher band is a migration, and it becomes a job-summary table plus
+# an issue.
+#
+# What it must never do (R10): edit Directory.Packages.props, edit a
+# packages.lock.json, open a version-bump PR, auto-merge anything - and it must not
+# fail the job because a migration is due. Whether and when to migrate is a human
+# decision: a red run would only teach everyone to ignore it.
+# `contents: read` is the permission that enforces the first half: the token this
+# job holds cannot write the tree even if a future edit tried to.
+#
+# It is dispatched by hand, not on a timer: PicoHex moves a dependency band only
+# just before a release, when the next version is being chosen anyway. There is no
+# calendar to stagger and nothing to ignore between releases.
+
+name: upstream-watch
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+permissions:
+  # Read the props file, nothing else. No `contents: write` on purpose - see the
+  # header: this job reports, a person edits.
+  contents: read
+  # Only for opening / commenting the migration issue.
+  issues: write
+
+jobs:
+  watch:
+    name: Report bands past the float
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # bash + curl, no .NET SDK: the question is "what does the feed publish at
+      # all", and a restore would answer a different one (what resolves inside the
+      # band). A per-package failure is recorded as `unknown` and the loop goes on -
+      # one unreachable package must not hide the other twenty-nine.
+      - name: Probe the feed for bands past the float
+        id: probe
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          props=Directory.Packages.props
+          work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/upstream-watch"
+          mkdir -p "$work"
+          table="$work/table.md"
+          rows="$work/rows.md"
+          : > "$rows"
+
+          migrations=0
+          unknown=0
+          pinned=0
+          exempt=0
+          watched=0
+
+          entries=$(grep -o '<PackageVersion Include="[^"]*" Version="[^"]*"' "$props" || true)
+          if [ -z "$entries" ]; then
+            echo "::error file=$props::no <PackageVersion Include=... Version=...> entry could be read - the parse is broken, not the feed"
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r id declared; do
+            [ -n "${id:-}" ] || continue
+
+            # Version="$(...)" is this repository's own release version, or a
+            # property the release pack injects from the tag. It is not a feed
+            # range, so there is no band to watch: nothing upstream can move it.
+            case $declared in
+              '$('*)
+                exempt=$((exempt + 1))
+                continue
+                ;;
+            esac
+
+            # A prerelease float is not a stable band (the policy does not allow one
+            # at all); say so instead of comparing it to a stable feed.
+            case $declared in
+              *-*)
+                printf '| `%s` | `%s` | - | prerelease float: no stable band to compare |\n' "$id" "$declared" >> "$rows"
+                unknown=$((unknown + 1))
+                continue
+                ;;
+            esac
+
+            # An exact pin floats nothing, so there is no band to leave. Reported,
+            # never silently dropped: the absence of a row would look like a pass.
+            case $declared in
+              *'*'*) ;;
+              *)
+                printf '| `%s` | `%s` | - | pinned: no floated band to watch |\n' "$id" "$declared" >> "$rows"
+                pinned=$((pinned + 1))
+                continue
+                ;;
+            esac
+
+            watched=$((watched + 1))
+            band=${declared%\*}
+            band=${band%.}
+            nseg=$(printf '%s' "$band" | awk -F. '{ print NF }')
+
+            # The flat container index is keyed by the LOWERCASED package id; the
+            # versions list carries prereleases too, which is why `-` is filtered.
+            slug=$(printf '%s' "$id" | tr '[:upper:]' '[:lower:]')
+            url="https://api.nuget.org/v3-flatcontainer/$slug/index.json"
+
+            # -L: follow a redirect, so an intercepted/mirrored feed still answers.
+            # A 404 (package not on nuget.org) and a network failure are the same
+            # verdict here: unknown, keep going.
+            if ! index=$(curl -fsSL --max-time 20 --retry 3 --retry-delay 2 --retry-connrefused "$url" 2>/dev/null); then
+              printf '| `%s` | `%s` | - | unknown: the feed did not answer |\n' "$id" "$declared" >> "$rows"
+              unknown=$((unknown + 1))
+              continue
+            fi
+
+            latest=$(printf '%s' "$index" | grep -o '"[0-9][^"]*"' | tr -d '"' | grep -v -- '-' | sort -V | tail -1 || true)
+            case ${latest:-} in
+              '' | *[!0-9.]*)
+                printf '| `%s` | `%s` | - | unknown: no stable version on the feed |\n' "$id" "$declared" >> "$rows"
+                unknown=$((unknown + 1))
+                continue
+                ;;
+            esac
+
+            # The band is "the segments the declaration does NOT float", so the
+            # verdict is one prefix comparison, for both tiers at once:
+            # first-party `2026.13` and official/third-party `5.9` are both just
+            # "everything before the `*`".
+            latest_band=$(printf '%s' "$latest" | cut -d. -f1-"$nseg")
+            if [ "$latest_band" = "$band" ]; then
+              printf '| `%s` | `%s` | `%s` | OK |\n' "$id" "$declared" "$latest" >> "$rows"
+              continue
+            fi
+
+            # Not the same band - but which way? A feed older than the declaration
+            # is a different fact from a feed ahead of it, and calling it a
+            # migration would be a false report.
+            higher=$(printf '%s\n%s\n' "$band" "$latest_band" | sort -V | tail -1)
+            if [ "$higher" = "$latest_band" ]; then
+              printf '| `%s` | `%s` | `%s` | **migration owed**: band `%s` -> `%s` |\n' "$id" "$declared" "$latest" "$band" "$latest_band" >> "$rows"
+              migrations=$((migrations + 1))
+            else
+              printf '| `%s` | `%s` | `%s` | feed is older than the declared band |\n' "$id" "$declared" "$latest" >> "$rows"
+            fi
+          done < <(printf '%s\n' "$entries" | sed -E 's/^<PackageVersion Include="([^"]*)" Version="([^"]*)"$/\1\t\2/')
+
+          {
+            printf '## Upstream watch: the floated bands\n\n'
+            printf 'Declarations read from `%s`; latest stable asked of the nuget.org flat container index.\n\n' "$props"
+            if [ "$migrations" -gt 0 ]; then
+              printf '**%s package(s) left the band the policy forbids floating.** deps-refresh cannot see this by construction - it re-resolves inside the declared range only - so this is the migration a person owes.\n\n' "$migrations"
+            else
+              printf 'Every declared band still contains the latest stable release of the package it names: the only moves available were patches, and patches belong to deps-refresh.\n\n'
+            fi
+            printf '| package | declared | latest stable | status |\n'
+            printf '|---|---|---|---|\n'
+            sort "$rows"
+            printf '\n%s band(s) watched - %s migration owed, %s unknown, %s pinned, %s exempt (`$(...)`).\n' \
+              "$watched" "$migrations" "$unknown" "$pinned" "$exempt"
+          } > "$table"
+          cat "$table" >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+
+          if [ -n "${GITHUB_OUTPUT:-}" ]; then
+            printf 'migrated=%s\n' "$migrations" >> "$GITHUB_OUTPUT"
+          fi
+
+      # One issue, updated in place: each run asks "what has left its band right
+      # now", so that is the only state worth keeping. Commenting on the open
+      # issue keeps the history (and the reviewer's replies) in one thread.
+      - name: Report the migration in an issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIGRATED: ${{ steps.probe.outputs.migrated }}
+          ISSUE_TITLE: 'deps: upstream moved past the floated band'
+        run: |
+          set -euo pipefail
+
+          work="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/upstream-watch"
+          table="$work/table.md"
+
+          # No migration: the summary already says so. An issue every week saying
+          # "nothing happened" is how a report becomes noise.
+          if [ "${MIGRATED:-0}" -eq 0 ]; then
+            echo "::notice::no band moved past its float - nothing to report beyond the job summary"
+            exit 0
+          fi
+
+          body="$work/body.md"
+          {
+            printf 'A floated band in `Directory.Packages.props` no longer contains what the feed publishes. `deps-refresh` re-resolves **inside** the declared band, so this move is invisible to it by construction - it is the one dependency event this repository reserves for a person.\n\n'
+            cat "$table"
+            printf '\n**This is a band move, not a patch: change the segment of the matching entry in `Directory.Packages.props` to the new band, then `dotnet restore --force-evaluate` to regenerate the locks; if the build or the tests then break, adapt our code to upstream - do not roll the version back.**\n'
+            printf '\nReported by `.github/workflows/upstream-watch.yml`, which never edits a props file, a lock file or a version.\n'
+          } > "$body"
+
+          # Match on the exact title rather than a search query: a search would also
+          # pick up the PR titles and comments that mention it.
+          mapfile -t found < <(gh issue list --state open --limit 300 --json number,title \
+            --jq '.[] | "\(.number)\t\(.title)"' | awk -F'\t' -v t="$ISSUE_TITLE" '$2 == t { print $1 }')
+          existing=${found[0]:-}
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body"
+            echo "::notice::updated the open issue #$existing"
+            exit 0
+          fi
+
+          # `dependencies` is the wanted label; a repository that never created it
+          # must still get the report, so the label is retried without.
+          if ! gh issue create --title "$ISSUE_TITLE" --body-file "$body" --label dependencies; then
+            echo "::warning::could not open the issue with the 'dependencies' label - retrying without it"
+            gh issue create --title "$ISSUE_TITLE" --body-file "$body"
+          fi

@@ -34,6 +34,28 @@
   <!-- ===== AOT Strategy ===== -->
 
   <!--
+    UseDefaultPublishRuntimeIdentifier=false (R6a).
+
+    The SDK (Microsoft.NET.RuntimeIdentifierInference.targets) turns a publish
+    modifier into an implicit RID: when an executable sets PublishAot,
+    PublishTrimmed, PublishReadyToRun, PublishSingleFile or PublishSelfContained
+    and no RuntimeIdentifier is given, it defaults PublishRuntimeIdentifier to
+    the current machine's portable RID and then appends that RID to
+    RuntimeIdentifiers "so assets needed to publish will be restored".
+    RuntimeIdentifiers feeds the restore graph, so the machine's RID leaks into
+    everything restore writes, including packages.lock.json, which gains a
+    "net10.0/<rid>" section that is invalid on any other OS/arch. CI is a
+    win/linux/macos/arm matrix, so a lock file written on Windows would fail
+    locked-mode restore on every other leg.
+
+    Setting it to false keeps the RID out of restore. An explicit -r still works
+    (it sets RuntimeIdentifier directly, and this switch only supplies a default).
+  -->
+  <PropertyGroup>
+    <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
+  </PropertyGroup>
+
+  <!--
     AotOptimizationLevel:
       minimal  — Tests and default. PublishAot + TrimMode only, fast compilation.
       aggressive — Samples and Benchmarks. Full trimming, no reflection, no debug info.
@@ -97,29 +119,34 @@
 
   <!-- ===== Lock files =====
 
-       Two conditions, both load-bearing.
+       One condition, and it is load-bearing.
 
-       1. UseProjectReferences. That switch rewrites a sibling PackageReference
-          into a ProjectReference (see the per-csproj ItemGroups), so the two
-          modes resolve two genuinely different graphs and one packages.lock.json
-          cannot describe both. Evaluated empirically: a lock file written under
-          UseProjectReferences=true is rejected by
-          `-p:UseProjectReferences=false -p:RestoreLockedMode=true` with
-          "The package references have changed for net10.0 ... PicoDI.Abs".
-          Lock files therefore cover the inner-loop / CI graph, which is the only
-          one that can restore in a plain checkout - the PackageReference graph
-          needs the sibling packages published at $(Version), which only the
-          release pipeline supplies via -p:Version=<tag>.
+       UseProjectReferences. That switch rewrites a sibling PackageReference
+       into a ProjectReference (see the per-csproj ItemGroups), so the two modes
+       resolve two genuinely different graphs and one packages.lock.json cannot
+       describe both. Evaluated empirically: a lock file written under
+       UseProjectReferences=true is rejected by
+       `-p:UseProjectReferences=false -p:RestoreLockedMode=true` with
+       "The package references have changed for net10.0 ... PicoDI.Abs".
+       Lock files therefore cover the inner-loop / CI graph, which is the only
+       one that can restore in a plain checkout; the PackageReference graph
+       needs the sibling packages published at $(Version), which only the
+       release pipeline supplies via -p:Version=<tag>.
 
-       2. Not samples/benchmarks/scripts. Every project there is an AOT
-          executable, and for those the SDK adds an implicit RID to restore, so
-          the lock file gains a machine-specific section ("net10.0/win-x64" when
-          written on Windows). CI is a win/linux/macos/arm matrix, so committing
-          those would make every non-Windows restore fail in locked mode. They
-          are left unlocked; the library and test graphs - the ones that
-          actually ship - are locked.
+       There used to be a second condition excluding samples/benchmarks/scripts.
+       Every project there is an AOT executable, and the SDK injected an implicit
+       publish RID into restore, so their lock files carried a machine-specific
+       "net10.0/<rid>" section that broke locked-mode restore on the other CI
+       legs. That cause is gone - UseDefaultPublishRuntimeIdentifier=false above
+       keeps the implicit RID out of restore - so the exclusion is gone with it
+       and every project in PicoInfra.slnx is locked. scripts/api-surface is not
+       in the solution and restores only on demand, so it stays unlocked.
+
+       Invariant: every committed packages.lock.json has exactly one dependency
+       section, "net10.0". A RID-shaped key there means the implicit-RID switch
+       above stopped doing its job.
   -->
-  <PropertyGroup Condition="'$(UseProjectReferences)' == 'true' and '$(_PicoParentFolder)' != 'samples' and '$(_PicoParentFolder)' != 'benchmarks' and '$(_PicoParentFolder)' != 'scripts'">
+  <PropertyGroup Condition="'$(UseProjectReferences)' == 'true'">
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 

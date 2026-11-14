@@ -10,7 +10,7 @@
       },
       "TUnit": {
         "type": "Direct",
-        "requested": "[1.83.8, )",
+        "requested": "[1.83.*, )",
         "resolved": "1.83.8",
         "contentHash": "rSGKCMpH0zHsA7cL9p3HRx5/EkwCzEznTStjxuFMuynGdIkvACw1Ei+97f/TISTVC4PZwNZWrTIDky3AVnrlOw==",
         "dependencies": {
@@ -131,12 +131,12 @@
         "dependencies": {
           "PicoCfg": "[0.0.0-dev, )",
           "PicoCfg.Abs": "[0.0.0-dev, )",
-          "PicoYaml": "[2026.13.3, )"
+          "PicoYaml": "[2026.13.*, )"
         }
       },
       "PicoYaml": {
         "type": "CentralTransitive",
-        "requested": "[2026.13.3, )",
+        "requested": "[2026.13.*, )",
         "resolved": "2026.13.3",
         "contentHash": "/lXJ4mU8tp12S70cAPH6SMg2iFPg6yl/MhZXjd/bElU3C0I376FtAGL0JRYdNG/FWGtsOn7A/ly02Z85UTd3yA==",
         "dependencies": {

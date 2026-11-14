@@ -10,7 +10,7 @@
       },
       "TUnit": {
         "type": "Direct",
-        "requested": "[1.83.8, )",
+        "requested": "[1.83.*, )",
         "resolved": "1.83.8",
         "contentHash": "rSGKCMpH0zHsA7cL9p3HRx5/EkwCzEznTStjxuFMuynGdIkvACw1Ei+97f/TISTVC4PZwNZWrTIDky3AVnrlOw==",
         "dependencies": {

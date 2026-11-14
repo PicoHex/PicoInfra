@@ -10,7 +10,7 @@
       },
       "Microsoft.Testing.Extensions.CrashDump": {
         "type": "Direct",
-        "requested": "[2.5.3, )",
+        "requested": "[2.5.*, )",
         "resolved": "2.5.3",
         "contentHash": "FZqRqYTooE0IICJ1A3TL/wVJ32vtiEHAXg3ZwcwVzEbIVfz285OVA2M12rQKRO1gJ5fquJw4/JL0JfFJyxEHVg==",
         "dependencies": {
@@ -20,7 +20,7 @@
       },
       "Microsoft.Testing.Extensions.HangDump": {
         "type": "Direct",
-        "requested": "[2.5.3, )",
+        "requested": "[2.5.*, )",
         "resolved": "2.5.3",
         "contentHash": "GoEUNX+/qTKD394NvLTHo+Vp/CNYc8Fi3VdM8UwTzkRXMWGL2dPzh5ha4Fc42aBsIeVjw4Z+IoSJ5/n82bGSOg==",
         "dependencies": {
@@ -30,7 +30,7 @@
       },
       "TUnit": {
         "type": "Direct",
-        "requested": "[1.83.8, )",
+        "requested": "[1.83.*, )",
         "resolved": "1.83.8",
         "contentHash": "rSGKCMpH0zHsA7cL9p3HRx5/EkwCzEznTStjxuFMuynGdIkvACw1Ei+97f/TISTVC4PZwNZWrTIDky3AVnrlOw==",
         "dependencies": {
@@ -162,14 +162,14 @@
       "picolog.json": {
         "type": "Project",
         "dependencies": {
-          "PicoJetson": "[2026.13.3, )",
+          "PicoJetson": "[2026.13.*, )",
           "PicoLog": "[0.0.0-dev, )",
           "PicoLog.Abs": "[0.0.0-dev, )"
         }
       },
       "PicoJetson": {
         "type": "CentralTransitive",
-        "requested": "[2026.13.3, )",
+        "requested": "[2026.13.*, )",
         "resolved": "2026.13.3",
         "contentHash": "30znhEAHWUt72FJKkVqauQi4OCvDWamjM6PoAAilog9+LRtiDBJW0gp8+HgK+tKvLM7VSwTgGl1OZzfQ/NqfFA==",
         "dependencies": {
