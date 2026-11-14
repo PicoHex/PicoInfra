@@ -9,13 +9,10 @@ name: Refresh package lock files
 # existing lock and would resolve to the same versions forever; locked mode (the
 # CI default) refuses to update it at all. Only this flag re-resolves.
 #
-# Weekly, not daily: the lock files exist to catch silent transitive drift, not
+# On demand before a release, not on a timer: the lock files exist to catch silent transitive drift, not
 # to chase same-day patches. Security advisories are already handled by NuGet
 # audit inside the normal build, and failing fast there is the right response.
 on:
-  schedule:
-    # Mondays, 06:00 UTC.
-    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
