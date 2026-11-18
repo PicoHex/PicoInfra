@@ -524,7 +524,7 @@ var mediator = scope.GetService<IMediator>();
 Benchmark suites live under `*/benchmarks/` (PicoDI, PicoCfg, PicoLog, PicoAop, PicoMediator — PicoSchedule has none yet). They compare against `Microsoft.Extensions.*` baselines where applicable:
 
 ```shell
-dotnet run -c Release --project PicoDI/benchmarks/PicoDI.Benchmarks
+dotnet run -c Release --project PicoDI/benchmarks/PicoDI.Benchmarks -f net10.0
 # the same pattern for the other modules (PicoLog also accepts `-- main` / `-- wait`)
 ```
 

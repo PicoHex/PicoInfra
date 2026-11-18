@@ -80,7 +80,7 @@ taskkill //F //IM testhost.exe
 
 # Run the test project directly through its executable. The repo defaults
 # to PublishAot=true, so explicitly disable AOT for a managed test run:
-dotnet run --project PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -c Release -p:PublishAot=false
+dotnet run --project PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -f net10.0 -c Release -p:PublishAot=false
 ```
 
 `-p:PublishAot=false` is required because the repo default `PublishAot=true`
@@ -139,7 +139,7 @@ PicoInfra is AOT-first. Before submitting, verify your changes compile with Nati
 
 ```shell
 # Publish a test project with AOT enabled
-dotnet publish PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -c Release -p:PublishAot=true
+dotnet publish PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -f net10.0 -c Release -p:PublishAot=true
 
 # Or for a specific project
 dotnet publish <project>.csproj -c Release -p:PublishAot=true

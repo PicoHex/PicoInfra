@@ -5,11 +5,11 @@ Run the benchmark project in `Release` mode.
 ## Run commands
 
 - Run both suites:
-  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks`
+  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks -f net10.0`
 - Run only the main suite:
-  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks -- main`
+  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks -f net10.0 -- main`
 - Run only the wait suite:
-  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks -- wait`
+  - `dotnet run -c Release --project benchmarks/PicoLog.Benchmarks -f net10.0 -- wait`
 
 ## Suites
 
