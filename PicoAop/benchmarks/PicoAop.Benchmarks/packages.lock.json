@@ -42,6 +42,48 @@
       "picodi.abs": {
         "type": "Project"
       }
+    },
+    "net11.0": {
+      "Microsoft.DotNet.ILCompiler": {
+        "type": "Direct",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "lw6gUL92db6XPwYsQwaGwrJxgRM0X0qQKl0QkwuZIACMtgH0eFu6jmq6W+/L8qTxQZwggfV/dGjICyMqVHdehg=="
+      },
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "gK2aq4XvChj5kvozpPHrkfKkr7zc5Z4xoTrJb4GPZzDEPMlCk0TX632bwY3LsWcX2UVcVRQBBGzsBGC2lq6YhA=="
+      },
+      "PicoBench": {
+        "type": "Direct",
+        "requested": "[2026.4.*, )",
+        "resolved": "2026.4.0",
+        "contentHash": "cJBjOZHCbvye3vzQUibWpFMutOhLFL1Py+dxicbd8OIZovrM24pnuTWUkG2txz7V9LZkcw000gL05qOQkWe/yw=="
+      },
+      "picoaop.abs": {
+        "type": "Project",
+        "dependencies": {
+          "PicoDI.Abs": "[0.0.0-dev, )"
+        }
+      },
+      "picoaop.di": {
+        "type": "Project",
+        "dependencies": {
+          "PicoAop.Abs": "[0.0.0-dev, )",
+          "PicoDI.Abs": "[0.0.0-dev, )"
+        }
+      },
+      "picodi": {
+        "type": "Project",
+        "dependencies": {
+          "PicoDI.Abs": "[0.0.0-dev, )"
+        }
+      },
+      "picodi.abs": {
+        "type": "Project"
+      }
     }
   }
 }

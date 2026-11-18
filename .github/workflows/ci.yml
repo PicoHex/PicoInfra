@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DOTNET_VERSION: 10.0.x
+  DOTNET_VERSION: 11.0.x
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
 
 # ---------------------------------------------------------------------------
@@ -315,15 +315,15 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoDI/src/PicoDI/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoDI/src/PicoDI/ -f net10.0 -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoDI.Sample (managed smoke test)
-        run: dotnet run --project PicoDI/samples/PicoDI.Sample/ -c Release -p:PublishAot=false
+        run: dotnet run --project PicoDI/samples/PicoDI.Sample/ -f net10.0 -c Release -p:PublishAot=false
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoDI.Sample.Host (managed smoke test)
-        run: dotnet run --project PicoDI/samples/PicoDI.Sample.Host/ -c Release -p:PublishAot=false
+        run: dotnet run --project PicoDI/samples/PicoDI.Sample.Host/ -f net10.0 -c Release -p:PublishAot=false
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
@@ -457,7 +457,7 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoCfg/src/PicoCfg/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoCfg/src/PicoCfg/ -f net10.0 -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
@@ -640,11 +640,11 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoLog/src/PicoLog/ -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoLog/src/PicoLog/ -f net10.0 -p:PublishAot=true -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Run PicoLog.Sample (managed smoke test)
-        run: dotnet run --project PicoLog/samples/PicoLog.Sample/ -c Release -p:PublishAot=false
+        run: dotnet run --project PicoLog/samples/PicoLog.Sample/ -f net10.0 -c Release -p:PublishAot=false
 
       # Gated on purpose (implicit if: success()): nothing is shipped off a red test run.
       - name: Pack CI packages (package-consumer validation)
@@ -754,7 +754,7 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoAop/samples/PicoAop.Sample/ -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoAop/samples/PicoAop.Sample/ -f net10.0 -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose: it reads the publish directory, so on a failed publish it would only
       # add a second, misleading failure on top of the real one from the gate above.
@@ -870,7 +870,7 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoMediator/samples/PicoMediator.Sample/ -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoMediator/samples/PicoMediator.Sample/ -f net10.0 -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose: it reads the publish directory, so on a failed publish it would only
       # add a second, misleading failure on top of the real one from the gate above.
@@ -984,7 +984,7 @@ jobs:
       # Diagnostic gate: runs on a red job by design (see "Step gating policy" at the top).
       - name: AOT publish validation
         if: ${{ !cancelled() }}
-        run: dotnet publish PicoSchedule/samples/PicoSchedule.Sample/ -r ${{ matrix.rid }} --configuration Release
+        run: dotnet publish PicoSchedule/samples/PicoSchedule.Sample/ -f net10.0 -r ${{ matrix.rid }} --configuration Release
 
       # Gated on purpose: it reads the publish directory, so on a failed publish it would only
       # add a second, misleading failure on top of the real one from the gate above.

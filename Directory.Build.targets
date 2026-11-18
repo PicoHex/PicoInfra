@@ -50,8 +50,14 @@
       <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
       <_AotPublishDir>$(BaseIntermediateOutputPath)aot-publish\</_AotPublishDir>
     </PropertyGroup>
+    <!-- -f $(TargetFramework) is REQUIRED, not cosmetic: this Exec starts a NEW msbuild
+         process, which re-evaluates the project from scratch and inherits nothing about the
+         framework this Run target was invoked for. Every project here is multi-targeted
+         (net10.0;net11.0), so the nested `dotnet publish` would otherwise fail with
+         NETSDK1129 "the project does not have a single target framework". -->
     <Exec
       Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot;
+        -f $(TargetFramework)
         -c $(Configuration)
         -r $(RuntimeIdentifier)
         -p:PublishAot=true

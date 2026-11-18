@@ -142,9 +142,10 @@
        and every project in PicoInfra.slnx is locked. scripts/api-surface is not
        in the solution and restores only on demand, so it stays unlocked.
 
-       Invariant: every committed packages.lock.json has exactly one dependency
-       section, "net10.0". A RID-shaped key there means the implicit-RID switch
-       above stopped doing its job.
+       Invariant: a multi-targeted project's committed packages.lock.json has
+       exactly two dependency sections, "net10.0" and "net11.0" (a netstandard2.0
+       source generator has its one .NETStandard section). A RID-shaped key there
+       means the implicit-RID switch above stopped doing its job.
   -->
   <PropertyGroup Condition="'$(UseProjectReferences)' == 'true'">
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>

@@ -21,6 +21,27 @@
       "picomediator.abs": {
         "type": "Project"
       }
+    },
+    "net11.0": {
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[11.0.0, )",
+        "resolved": "11.0.0",
+        "contentHash": "gK2aq4XvChj5kvozpPHrkfKkr7zc5Z4xoTrJb4GPZzDEPMlCk0TX632bwY3LsWcX2UVcVRQBBGzsBGC2lq6YhA=="
+      },
+      "picodi.abs": {
+        "type": "Project"
+      },
+      "picomediator": {
+        "type": "Project",
+        "dependencies": {
+          "PicoDI.Abs": "[0.0.0-dev, )",
+          "PicoMediator.Abs": "[0.0.0-dev, )"
+        }
+      },
+      "picomediator.abs": {
+        "type": "Project"
+      }
     }
   }
 }
