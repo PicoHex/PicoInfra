@@ -30,7 +30,7 @@ and do not infer it from a date.
 
 | Piece | What it is |
 |---|---|
-| `.github/workflows/release.yml` | The packer that publishes. Triggered by a `v*` tag (or `workflow_dispatch`). It runs every test project, then packs in three phases (abstractions with `UseProjectReferences=true`, consumers against the staged feed, then the rest), strips the leading `v` from the tag to get `-p:Version`, uploads the `.nupkg`/`.snupkg` set, and on the `publish` job logs into nuget.org by OIDC, pushes the `.nupkg` set with `--skip-duplicate`, then the `.snupkg` set the same way, and creates the GitHub release whose body is `docs/release-notes/<tag>.md` followed by the auto-generated compare link (the step fails when that file is missing, so a release page can never ship without notes). |
+| `.github/workflows/release.yml` | The packer that publishes. Triggered by a `v*` tag (or `workflow_dispatch`, whose `backfill_tag` input runs the symbol backfill job instead of the release chain — see *Symbols* below). It runs every test project, then packs in three phases (abstractions with `UseProjectReferences=true`, consumers against the staged feed, then the rest), strips the leading `v` from the tag to get `-p:Version`, uploads the `.nupkg`/`.snupkg` set, and on the `publish` job logs into nuget.org by OIDC, pushes the `.nupkg` set with `--skip-duplicate`, then the `.snupkg` set the same way, and creates the GitHub release whose body is `docs/release-notes/<tag>.md` followed by the auto-generated compare link (the step fails when that file is missing, so a release page can never ship without notes). |
 | `scripts/release.ps1` | The local packer: `-Version <x.y.z>` (mandatory), optional `-SkipTests`, `-NoPush`. Packs the same three phases into `artifacts/nupkg`, then creates an annotated tag and pushes branch + tag. It refuses a non-numeric version, a tag that already exists, and a dirty tree. It **is not** the skill's `release.ps1`: it has no `-DryRun` and no `-Bootstrap`, and it does not decide a version. |
 | `scripts/check-release-parity.sh` | Drift guard: the project sets packed by `release.ps1` and by `release.yml` must be identical, and so must the test-project sets. Runs `dotnet pack`/`dotnet test` target extraction, exits non-zero on any difference. Run it after touching either side — drift here is silent, and once left PicoSchedule out of the local feed. |
 | `artifacts/nupkg` | The local folder feed. Restored automatically when the folder exists (`Directory.Build.props` adds it to `RestoreAdditionalProjectSources`). It exists because nuget.org needs minutes to index a new version while sibling repos (PicoActor, PicoNode, PicoAgent, …) restore by `PackageReference`. Same bits as CI, served sooner. |
@@ -56,22 +56,32 @@ packable project and empty / `symbols.nupkg` (the NuGet default) for `PicoLog.Te
 `dotnet pack` with no symbol property on the command line now leaves a `.snupkg` beside each
 `.nupkg`.
 
-A release that shipped without symbols is repaired by `.github/workflows/backfill-symbols.yml`. A
-NuGet version is immutable, so the only repair is pushing `.snupkg` files at the version already on
-the feed: it is `workflow_dispatch`-only with a `tag` input defaulting to `v2026.11.0`, it proves
-`HEAD` *is* that tag (a missing tag already fails the checkout; a branch of the same name must not
-pass), it re-packs the same 20 projects in `release.yml`'s three phases with the two symbol
-properties forced on the command line — the tag it builds may predate this fix, so it cannot rely on
-the tree — then pushes **only** `.snupkg` with `--skip-duplicate`, and fails on a `.nupkg`, a foreign
-version or an empty set. It is deliberately not a branch of `release.yml`: that path is
-production-validated and a regression there costs a release.
+A release that shipped without symbols is repaired by the **`backfill-symbols` job inside
+`release.yml`**, reached through `workflow_dispatch`. It cannot be its own workflow file: nuget.org's
+trusted-publishing policy for this repository names `release.yml`, and `NuGet/login` enforces the
+name — a standalone `backfill-symbols.yml` packed all 40 files correctly in run 44332758225 and then
+died with `Token exchange failed (HTTP 401) … Workflow mismatch for policy 'PicoInfra': expected
+'release.yml', actual 'backfill-symbols.yml'`. The policy names one file, so the repair job now lives
+in that file and its header explains why: do not move it back out.
+
+The job is gated on the `backfill_tag` dispatch input. Empty is the pre-existing behaviour — `pack`
+→ `publish`, version parsed from the ref; set, and `pack` stands down and `publish` with it through
+`needs`, so the run is the backfill alone. A NuGet version is immutable, so the only repair is
+pushing `.snupkg` files at the version already on the feed: the job checks out the tag, proves `HEAD`
+*is* that tag (a missing tag already fails the checkout; a branch of the same name must not pass),
+re-packs the same 20 projects in `release.yml`'s three phases with the two symbol properties forced
+on the command line — the tag it builds may predate this fix, so it cannot rely on the tree — then
+pushes **only** the `.snupkg` files, and fails on a `.nupkg`, a foreign version or an empty set. The
+push step declares `working-directory: artifacts/nupkg`, the directory the pack wrote: globbing the
+workspace root instead is what made the old job stand ready to announce "the pack produced no
+symbols" about a directory it had never listed.
 
 ```shell
-gh workflow run backfill-symbols.yml -f tag=v2026.11.0
+gh workflow run release.yml --ref main -f backfill_tag=v2026.11.0
 ```
 
 **Nothing gates it.** `release.yml` only *reports* the symbol count — `Publishing N package(s) and M
-symbol package(s)` (`:304`) and the same line after the pushes (`:323`) — so a release can ship 20
+symbol package(s)` (`:324`) and the same line after the pushes (`:363`) — so a release can ship 20
 packages and 0 `.snupkg` and stay green. The fix is in the pack, not in a gate. The backfill itself
 has not been run for `v2026.11.0`: nothing in this repository can verify a push to nuget.org, so a
 consumer of that version gets source-stepping only once someone dispatches it.
