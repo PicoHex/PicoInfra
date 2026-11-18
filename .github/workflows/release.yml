@@ -5,15 +5,22 @@ on:
     tags:
       - 'v*'
   # `workflow_dispatch` is ALSO the symbol backfill (job `backfill-symbols`
-  # below). With `backfill_tag` empty - the default, and the only thing a
-  # dispatch could do before this input existed - it behaves exactly as it
+  # below). With `backfill_run_id` empty - the default, and the only thing a
+  # dispatch could do before these inputs existed - it behaves exactly as it
   # always has: `pack` -> `publish`, version parsed from the ref. Set it and
   # `pack` stands down (and `publish` with it, through `needs`), so the run is
-  # the backfill job alone.
+  # the backfill job alone - and that job REPLAYS the named run's artifact
+  # instead of re-packing the tag, because a rebuild's PDBs never match the
+  # published binaries (see the job header, and docs/releasing.md).
   workflow_dispatch:
     inputs:
-      backfill_tag:
-        description: 'Existing release tag whose symbol packages must be backfilled (leave empty for a normal release run)'
+      backfill_run_id:
+        description: 'Release run id whose own nupkg artifact holds the symbol packages to push (leave empty for a normal release run)'
+        required: false
+        default: ''
+        type: string
+      tag:
+        description: 'Optional release tag those symbols belong to, e.g. v2026.11.2 - labels the log and summary only; the pushed version comes from the symbol file names'
         required: false
         default: ''
         type: string
@@ -41,10 +48,10 @@ jobs:
     # first branch of this OR is true and short-circuits, so a `v*` tag never
     # evaluates the input at all - and `inputs` is empty under `push` anyway, so
     # even the second branch cannot skip this job for a tag. Only a
-    # `workflow_dispatch` that SET `backfill_tag` stands it down, and `publish`
+    # `workflow_dispatch` that SET `backfill_run_id` stands it down, and `publish`
     # (which `needs: pack`) then stands down with it: a backfill dispatch runs
     # exactly one job and can never push a `.nupkg`.
-    if: github.event_name == 'push' || inputs.backfill_tag == ''
+    if: github.event_name == 'push' || inputs.backfill_run_id == ''
     # Consumed by `publish` (job name, and the release title once it needs it).
     # Without this block `needs.pack.outputs.version` is undefined and the
     # consuming expression silently falls through to its `||` default.
@@ -402,7 +409,7 @@ jobs:
             *.snupkg
 
   # ---------------------------------------------------------------------------
-  # Backfill symbols - dispatch-only repair for a release that shipped without them
+  # Backfill symbols - dispatch-only replay of a RELEASE RUN'S OWN artifact
   #
   # WHY THIS JOB IS IN release.yml AND NOT IN ITS OWN WORKFLOW FILE: nuget.org's
   # trusted-publishing policy for this repository is pinned to the workflow FILE
@@ -417,264 +424,182 @@ jobs:
   #
   # No workflow code can fix that - a policy names exactly one file, so the only
   # repair job that can obtain a key is one inside that file. Do NOT "tidy" this
-  # job back out into a separate workflow: it would repack 20 + 20 files, spend
-  # the `release` environment gate, and 401 at login with nothing to show for it.
+  # job back out into a separate workflow: it would spend the `release`
+  # environment gate and 401 at login with nothing to show for it.
   #
-  # A NuGet version is immutable, so the only repair for a version already on the
-  # feed is to push its `.snupkg` files afterwards, at that exact version. This
-  # job re-packs the tag, keeps the symbol packages, and pushes nothing else.
+  # WHY IT DOWNLOADS A RUN'S ARTIFACT INSTEAD OF RE-PACKING THE TAG: symbols
+  # cannot be retro-added to a published version. The published DLL's CodeView
+  # record pins its PDB id, and a rebuild of the same tag never reproduces it
+  # (PE TimeDateStamp, module MVID, CodeView timestamp/GUID and PDB_CHECKSUM are
+  # all stamped per toolchain instance), so a rebuilt `.snupkg` describes a PDB
+  # that no published binary points at. Measured: v2026.11.0 was re-packed and
+  # pushed by the previous version of THIS job (run 44340046281), all 20 symbol
+  # pushes returned `201 Created` and it reported "20 symbol packages pushed, 0
+  # skipped" - and 21 polling rounds over 94 minutes then found 0/20 retrievable
+  # (body `<Code>BlobNotFound</Code>`), while the 2026.11.2 control was 20/20 at
+  # HTTP 200 in the same rounds. A re-packing backfill can only produce 201s that
+  # vanish, so it refuses to pack at all now.
+  #
+  # What CAN bind: the `.snupkg` files of the release run that published the
+  # `.nupkg` files, because those were built from the very bits on the feed. So
+  # this job takes a RUN ID, downloads that run's `nupkg` artifact (the one
+  # `pack` uploads: 20 *.nupkg + 20 *.snupkg), keeps the `.snupkg` files and
+  # pushes only those. When that artifact holds no symbols - the v2026.11.0 shape,
+  # whose release run emitted 20 packages and 0 symbol packages - it says so and
+  # fails, because the only remaining public remedy is a NEW VERSION.
   # ---------------------------------------------------------------------------
   backfill-symbols:
-    name: Backfill symbols for ${{ inputs.backfill_tag }}
+    name: Backfill symbols from run ${{ inputs.backfill_run_id }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Dispatch-only, keyed off the same input that stands `pack` down. Under
     # `push` the `inputs` context is empty, so a tag push never reaches this job;
-    # an empty `backfill_tag` keeps `workflow_dispatch` on the ordinary
+    # an empty `backfill_run_id` keeps `workflow_dispatch` on the ordinary
     # pack -> publish chain and skips this one. Exactly one of the two paths runs.
-    if: inputs.backfill_tag != ''
+    if: inputs.backfill_run_id != ''
     # Same gate as `publish`: the environment holds the organization-level
     # NUGET_USER secret and the OIDC trust for nuget.org.
     environment: release
     permissions:
       contents: read
+      # `gh run download` reads ANOTHER run's artifacts through the Actions API.
+      # Without this the download step 404s while `contents: read` looks fine.
+      actions: read
       # `id-token: write` is what lets the job mint the identity token that
       # NuGet/login trades for a short-lived API key.
       id-token: write
 
     steps:
-      # The tag, not the branch: the bits on nuget.org came from that tree, and a
-      # symbol package is only useful if it describes those exact bits. A tag that
-      # does not exist fails here rather than later.
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.backfill_tag }}
-          fetch-depth: 0
-
+      # Deliberately NO actions/checkout: nothing here is built and nothing is
+      # read from the tree - the bits come from the release run's artifact, and
+      # a checkout could only offer the tag that cannot be rebuilt. `dotnet` is
+      # still needed, for `dotnet nuget push`.
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Derive version from tag
+      - name: Download the release run's package artifact
+        shell: bash
+        # Inputs reach bash through the environment, never interpolated into the
+        # script body.
+        env:
+          RUN_ID: ${{ inputs.backfill_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEST: ${{ github.workspace }}/artifacts/nupkg
+        run: |
+          set -euo pipefail
+
+          # Numeric only: this value is handed to `gh` as a run id, and an id that
+          # is not a number is a typo, not something to search for.
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Input backfill_run_id '$RUN_ID' is not a numeric run id (find it with: gh run list --workflow release.yml)."
+            exit 1
+          fi
+
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+
+          # Provenance in the log, tolerant: it must not be able to fail the job.
+          gh run view "$RUN_ID" --json workflowName,displayTitle,headSha \
+            --jq '"Replaying run \(.displayTitle) (\(.workflowName), \(.headSha[0:7]))"' 2>/dev/null || true
+
+          # The artifact `pack` uploads is named `nupkg` and carries both file
+          # kinds. `gh run download` is used instead of `actions/download-artifact`
+          # so the failure can be told apart from a successful download of an
+          # artifact that happens to be symbol-less - the two need different errors.
+          if ! gh run download "$RUN_ID" -n nupkg -D "$DEST" 2>"$RUNNER_TEMP/download.err"; then
+            cat "$RUNNER_TEMP/download.err" 2>/dev/null || true
+            names="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+              --jq '.artifacts[].name' 2>/dev/null || true)"
+            if [[ -z "$names" ]]; then
+              echo "::error::Run $RUN_ID could not be read, or it holds no artifacts (an expired artifact is deleted). Symbols cannot be rebuilt from a tag, so without that run's own .snupkg files the only remedy for that version is a NEW version."
+            else
+              echo "::error::Run $RUN_ID holds artifact(s) [$(printf '%s' "$names" | tr '\n' ' ')] but none named 'nupkg'. Nothing to replay - the only remedy for that version is a NEW version."
+            fi
+            exit 1
+          fi
+
+          # `gh` extracts the artifact zip with paths relative to the deepest
+          # common ancestor of what `upload-artifact` collected, so files normally
+          # land flat. Flatten anyway: the push step globs ONE level in its
+          # working-directory, and a nested file would silently drop out of it.
+          find "$DEST" -mindepth 2 -type f \( -name '*.nupkg' -o -name '*.snupkg' \) -exec mv -t "$DEST" {} +
+
+          echo "Downloaded artifact 'nupkg' from run $RUN_ID into $DEST:"
+          find "$DEST" -maxdepth 1 -type f | sort | sed 's/^/  /'
+
+      # The symbol-less case is decided HERE, before the `release` environment is
+      # spent and before OIDC mints a nuget.org key: a job that logs in and then
+      # reports "the artifact has no symbols" has burned the gate to learn
+      # something the download already knew. Same lesson as `if-no-files-found:
+      # error` in `pack` - a fault must surface where it happened.
+      - name: Verify the artifact holds symbol packages
         id: version
         shell: bash
-        # The input reaches bash through the environment, never interpolated into
-        # the script body.
         env:
-          TAG: ${{ inputs.backfill_tag }}
+          RUN_ID: ${{ inputs.backfill_run_id }}
+          TAG: ${{ inputs.tag }}
+          DEST: ${{ github.workspace }}/artifacts/nupkg
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9] ]]; then
-            echo "::error::Input backfill_tag '$TAG' is not a v-prefixed version tag (expected e.g. v2026.11.0)."
+          set -euo pipefail
+          shopt -s nullglob
+
+          packages=()
+          for file in "$DEST"/*.nupkg; do
+            # The legacy `*.symbols.nupkg` archive format is not a package either
+            # way; nuget.org rejects it on both endpoints.
+            if [[ "$file" == *.symbols.nupkg ]]; then
+              continue
+            fi
+            packages+=("$file")
+          done
+
+          symbols=()
+          for file in "$DEST"/*.snupkg; do
+            symbols+=("$file")
+          done
+
+          # The whole failure this job exists for. Refuse loudly and name the
+          # remedy: this is exactly v2026.11.0's shape (20 .nupkg, 0 .snupkg).
+          if [[ ${#symbols[@]} -eq 0 ]]; then
+            echo "::error::Run $RUN_ID's 'nupkg' artifact holds ${#packages[@]} package(s) and NO .snupkg files. That release never produced symbols, and a rebuild of its tag cannot match the published binaries (the PDB id is stamped at build time), so a push would be accepted and then never retrievable. The only remedy for that version is a NEW VERSION."
             exit 1
           fi
-          version="${TAG#v}"
-          if [[ -z "$version" ]]; then
-            echo "::error::Input backfill_tag '$TAG' has no version after the leading 'v'."
+
+          # The version is the artifact's, not the input's: every symbol package
+          # must name the same one, or this is not one release's worth of files.
+          versions="$(
+            for file in "${symbols[@]}"; do
+              base="$(basename "$file")"
+              if [[ "$base" =~ ^.+\.([0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?)\.snupkg$ ]]; then
+                printf '%s\n' "${BASH_REMATCH[1]}"
+              else
+                printf 'UNPARSED:%s\n' "$base"
+              fi
+            done | sort -u
+          )"
+          if [[ "$(printf '%s\n' "$versions" | grep -c . || true)" -ne 1 ]]; then
+            echo "::error::The artifact's symbol packages do not carry exactly one version: $(printf '%s' "$versions" | tr '\n' ' ')"
             exit 1
           fi
-          # The checkout resolved `refs/tags/$TAG` - a tag that did not exist would
-          # have failed there. This additionally proves we are ON it, not on a
-          # branch that happens to share the name.
-          head_sha="$(git rev-parse HEAD)"
-          tag_sha="$(git rev-parse "refs/tags/${TAG}^{commit}")"
-          if [[ "$head_sha" != "$tag_sha" ]]; then
-            echo "::error::HEAD ($head_sha) is not tag '$TAG' ($tag_sha)."
-            exit 1
+          version="$versions"
+
+          # A supplied tag must agree with what the files say - a mismatch means
+          # the wrong run id was pasted, which is the one mistake this job cannot
+          # detect on its own.
+          if [[ -n "$TAG" ]]; then
+            if [[ ! "$TAG" =~ ^v[0-9] ]]; then
+              echo "::error::Input tag '$TAG' is not a v-prefixed version tag (expected e.g. v2026.11.2)."
+              exit 1
+            fi
+            if [[ "${TAG#v}" != "$version" ]]; then
+              echo "::error::Input tag '$TAG' says version ${TAG#v}, but the artifact's symbol packages are $version. Wrong run id?"
+              exit 1
+            fi
           fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Packing $TAG as version $version (commit $head_sha)."
-
-      # Packs exactly what the `pack` job above packs, in the same three phases and
-      # the same order (abstractions first with project references so the bundled
-      # generators travel, then consumers against the staged artifacts/nupkg feed,
-      # then the rest). Two deliberate differences:
-      #
-      # 1. No tests. Safe HERE and only here: this tag is immutable and its bits are
-      #    already published, so a test result cannot change anything - we re-emit
-      #    files for a version that already exists, from the tree that produced it.
-      #    A RELEASE cannot skip them: it mints a new immutable version, and a red
-      #    test run there is the last moment the mistake can be stopped before it
-      #    is permanent on nuget.org.
-      #
-      # 2. Symbols are forced on the command line. IncludeSymbols /
-      #    SymbolPackageFormat=snupkg now live in Directory.Build.targets (they
-      #    must be in .targets, not .props - see the comment there), but this job
-      #    builds a tag that may predate that fix: v2026.11.0 does, and its
-      #    Directory.Build.targets has no symbol block at all. Without the two
-      #    properties below the pack emits 20 .nupkg and 0 .snupkg - the exact bug
-      #    this job repairs - so they stay on every pack line in this step.
-      #
-      # Output goes to artifacts/nupkg. The push step below declares that same
-      # directory as its `working-directory`; keep the two in step.
-      - name: Pack packages (no tests, symbols forced on)
-        shell: bash
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          NUPKG_DIR="$GITHUB_WORKSPACE/artifacts/nupkg"
-          rm -rf ./artifacts/nupkg
-          mkdir -p ./artifacts/nupkg
-
-          SYMBOLS=(-p:IncludeSymbols=true -p:SymbolPackageFormat=snupkg)
-
-          # ---- Phase 1: Abstractions (bundled generators via UseProjectReferences=true) ----
-          # PicoDI.Abs must be packed first because PicoAop.Abs depends on it
-          dotnet pack PicoDI/src/PicoDI.Abs/PicoDI.Abs.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=true \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoAop/src/PicoAop.Abs/PicoAop.Abs.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=true \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-          # ---- PicoSchedule (standalone, zero dependencies) ----
-          dotnet pack PicoSchedule/src/PicoSchedule/PicoSchedule.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoMediator/src/PicoMediator.Abs/PicoMediator.Abs.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=true \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg.Abs/PicoCfg.Abs.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=true \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoLog/src/PicoLog.Abs/PicoLog.Abs.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=true \
-            "${SYMBOLS[@]}"
-
-          # ---- Phase 2: Consumer libraries (depend on abstractions from Phase 1) ----
-          dotnet pack PicoAop/src/PicoAop.DI/PicoAop.DI.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoMediator/src/PicoMediator/PicoMediator.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoMediator/src/PicoMediator.DI/PicoMediator.DI.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoDI/src/PicoDI/PicoDI.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg/PicoCfg.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg.DI/PicoCfg.DI.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          # ---- Phase 3: SerDe (depend on Phase 1 abstractions + Phase 2 consumer libs) ----
-          dotnet pack PicoCfg/src/PicoCfg.Json/PicoCfg.Json.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg.Yaml/PicoCfg.Yaml.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg.Ini/PicoCfg.Ini.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoCfg/src/PicoCfg.Toml/PicoCfg.Toml.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoLog/src/PicoLog/PicoLog.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoLog/src/PicoLog.DI/PicoLog.DI.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoLog/src/PicoLog.Json/PicoLog.Json.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          dotnet pack PicoAop/src/PicoAop/PicoAop.csproj \
-            --configuration Release \
-            --output "$NUPKG_DIR" \
-            -p:Version="$VERSION" \
-            -p:UseProjectReferences=false \
-            -p:RestoreAdditionalProjectSources="$NUPKG_DIR" \
-            "${SYMBOLS[@]}"
-
-          echo "Pack finished: $(find "$NUPKG_DIR" -name '*.nupkg' ! -name '*.snupkg' | wc -l) package(s), $(find "$NUPKG_DIR" -name '*.snupkg' | wc -l) symbol package(s)."
+          echo "Staged in $DEST: ${#packages[@]} package(s), ${#symbols[@]} symbol package(s) at version $version."
 
       - name: NuGet login (OIDC → temp API key)
         # The same step, verbatim, as `publish` - and the whole reason this job
@@ -687,25 +612,26 @@ jobs:
 
       - name: Push symbol packages only
         shell: bash
-        # THE packed directory - the fix for the second defect. Without this key
-        # the glob below reads the workspace root while all 40 files sit in
-        # artifacts/nupkg: the standalone workflow's log listed every file under
-        # artifacts/nupkg/ and none at the root, so its "empty set" error would
-        # have blamed the pack for a directory mistake. `working-directory` is
-        # relative to the workspace, which is where the pack step wrote.
+        # THE DOWNLOAD directory - the fix for the second defect, kept: without
+        # this key the glob below reads the workspace root while every file sits
+        # in artifacts/nupkg, and the "empty set" error then blames the artifact
+        # for a directory mistake. `working-directory` is relative to the
+        # workspace, which is where the download step wrote.
         working-directory: artifacts/nupkg
         env:
-          TAG: ${{ inputs.backfill_tag }}
+          RUN_ID: ${{ inputs.backfill_run_id }}
+          TAG: ${{ inputs.tag }}
         run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
           shopt -s nullglob
 
-          # `pwd` appears in the error message below, so prove it is the packed
+          # `pwd` appears in the error message below, so prove it is the download
           # directory before that message is trusted.
           actual="$(pwd -P)"
           expected="$(cd "$GITHUB_WORKSPACE/artifacts/nupkg" 2>/dev/null && pwd -P || true)"
           if [[ -z "$expected" || "$actual" != "$expected" ]]; then
-            echo "::error::Working directory is '$actual', not the packed directory '$GITHUB_WORKSPACE/artifacts/nupkg'."
+            echo "::error::Working directory is '$actual', not the download directory '$GITHUB_WORKSPACE/artifacts/nupkg'."
             exit 1
           fi
 
@@ -726,12 +652,10 @@ jobs:
             symbols+=("$file")
           done
 
-          # An empty symbol set is the whole failure this job exists to repair, so
-          # it is a hard error - not a warning, not a no-op. `shopt -s nullglob`
-          # makes an empty glob an empty array instead of the literal `*.snupkg`,
-          # and the directory check above is what makes `$(pwd)` here honest.
+          # Re-checked here even though the verify step already refused: this is
+          # the step that would push, so it asserts its own precondition.
           if [[ ${#symbols[@]} -eq 0 ]]; then
-            echo "::error::No .snupkg files in $(pwd) - the pack at '$TAG' produced no symbol packages, so there is nothing to backfill."
+            echo "::error::No .snupkg files in $(pwd) - run $RUN_ID's artifact holds no symbol packages, so there is nothing to backfill and the only remedy for that version is a NEW version."
             exit 1
           fi
 
@@ -754,8 +678,8 @@ jobs:
             fi
           done
 
-          echo "Staged in $(pwd): ${#packages[@]} package(s), ${#symbols[@]} symbol package(s)."
-          echo "Target version: $VERSION (tag $TAG)"
+          echo "Pushing from $(pwd): ${#packages[@]} package(s) staged and NOT pushed, ${#symbols[@]} symbol package(s)."
+          echo "Target version: $VERSION (run $RUN_ID${TAG:+, tag $TAG})"
 
           pushed=0
           skipped=0
@@ -791,11 +715,18 @@ jobs:
             exit 1
           fi
 
+          # A 201 is not proof the symbols became retrievable - the re-packing
+          # backfill got 20 of them and delivered nothing - so this line states
+          # only what was accepted, and the run's provenance next to it.
           echo "$pushed symbol packages pushed, $skipped skipped"
           {
-            echo "### Symbol backfill for \`$TAG\`"
+            echo "### Symbol backfill from release run \`$RUN_ID\`"
             echo ""
-            echo "- version: \`$VERSION\`"
+            echo "- version: \`$VERSION\`${TAG:+ (tag \`$TAG\`)}"
             echo "- **$pushed symbol packages pushed, $skipped skipped**"
             echo "- packages intentionally not pushed: ${#packages[@]} (already on the feed)"
+            echo "- source: that run's own \`nupkg\` artifact, i.e. the bits it published"
+            echo ""
+            echo "A \`201 Created\` means nuget.org accepted the upload, not that it is"
+            echo "servable yet; verify with the symbol endpoint before announcing it."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
