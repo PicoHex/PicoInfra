@@ -119,33 +119,33 @@
 
   <!-- ===== Lock files =====
 
-       One condition, and it is load-bearing.
+       packages.lock.json is a RECORD, not a pin, and RestorePackagesWithLockFile
+       below is what writes it.
 
-       UseProjectReferences. That switch rewrites a sibling PackageReference
-       into a ProjectReference (see the per-csproj ItemGroups), so the two modes
-       resolve two genuinely different graphs and one packages.lock.json cannot
-       describe both. Evaluated empirically: a lock file written under
-       UseProjectReferences=true is rejected by
-       `-p:UseProjectReferences=false -p:RestoreLockedMode=true` with
-       "The package references have changed for net10.0 ... PicoDI.Abs".
-       Lock files therefore cover the inner-loop / CI graph, which is the only
-       one that can restore in a plain checkout; the PackageReference graph
-       needs the sibling packages published at $(Version), which only the
-       release pipeline supplies via -p:Version=<tag>.
+       What floats: the DECLARATIONS in Directory.Packages.props ("which safe
+       range"), today.
+       What this produces: the packages.lock.json a restore writes beside each
+       project ("which exact versions this restore resolved").
+       Where it lives: on disk, not in the repository. The file is gitignored, so
+       `dotnet publish` adding RID-specific entries (Microsoft.DotNet.ILCompiler)
+       can no longer dirty the tree on a release, and a "net10.0/<rid>" section
+       can no longer reach a review at all.
+       How to answer "which versions did that build use": the `resolved-versions`
+       artifact .github/workflows/ci.yml uploads (one per leg), not a file in git.
 
-       There used to be a second condition excluding samples/benchmarks/scripts.
-       Every project there is an AOT executable, and the SDK injected an implicit
-       publish RID into restore, so their lock files carried a machine-specific
-       "net10.0/<rid>" section that broke locked-mode restore on the other CI
-       legs. That cause is gone - UseDefaultPublishRuntimeIdentifier=false above
-       keeps the implicit RID out of restore - so the exclusion is gone with it
-       and every project in PicoInfra.slnx is locked. scripts/api-surface is not
-       in the solution and restores only on demand, so it stays unlocked.
+       The condition stays, for the other half of what it always said:
+       UseProjectReferences rewrites a sibling PackageReference into a
+       ProjectReference (see the per-csproj ItemGroups), so the two modes resolve
+       two genuinely different graphs. The record only covers the inner-loop / CI
+       graph, which is the only one that can restore in a plain checkout; the
+       PackageReference graph needs the sibling packages published at
+       $(Version), which only the release pipeline supplies via -p:Version=<tag>.
+       scripts/api-surface is not in the solution and restores only on demand, so
+       it stays unlocked.
 
-       Invariant: a multi-targeted project's committed packages.lock.json has
-       exactly two dependency sections, "net10.0" and "net11.0" (a netstandard2.0
-       source generator has its one .NETStandard section). A RID-shaped key there
-       means the implicit-RID switch above stopped doing its job.
+       Deliberately still TRUE: with this off NuGet neither writes nor reads a
+       lock file, so a restore resolves silently and leaves nothing to inspect.
+       Untracked is not off.
   -->
   <PropertyGroup Condition="'$(UseProjectReferences)' == 'true'">
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>

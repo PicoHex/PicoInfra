@@ -288,7 +288,24 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj -p:UseProjectReferences=true
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picodi-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: dotnet build PicoDI/tests/PicoDI.Test/PicoDI.Test.csproj --configuration Release --no-restore -p:UseProjectReferences=true
@@ -405,13 +422,30 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.DI.Tests/PicoCfg.DI.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.Json.Tests/PicoCfg.Json.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.Yaml.Tests/PicoCfg.Yaml.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.Ini.Tests/PicoCfg.Ini.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoCfg/tests/PicoCfg.Toml.Tests/PicoCfg.Toml.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoCfg/tests/PicoCfg.Tests/PicoCfg.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Gen.Tests/PicoCfg.Gen.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.DI.Tests/PicoCfg.DI.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Json.Tests/PicoCfg.Json.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Yaml.Tests/PicoCfg.Yaml.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Ini.Tests/PicoCfg.Ini.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoCfg/tests/PicoCfg.Toml.Tests/PicoCfg.Toml.Tests.csproj -p:UseProjectReferences=true
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picocfg-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: |
@@ -584,8 +618,25 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
-          dotnet restore PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoLog/tests/PicoLog.Tests/PicoLog.Tests.csproj -p:UseProjectReferences=true
+          dotnet restore PicoLog/tests/PicoLog.Json.Tests/PicoLog.Json.Tests.csproj -p:UseProjectReferences=true
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picolog-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: |
@@ -738,7 +789,24 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoAop/tests/PicoAop.Tests/PicoAop.Tests.csproj -p:UseProjectReferences=true
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picoaop-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: |
@@ -857,7 +925,24 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj -p:UseProjectReferences=true -p:RestoreLockedMode=true
+          dotnet restore PicoMediator/tests/PicoMediator.Tests/PicoMediator.Tests.csproj -p:UseProjectReferences=true
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picomediator-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: |
@@ -973,7 +1058,24 @@ jobs:
       - name: Restore dependencies
         run: |
           mkdir -p ./artifacts/nupkg
-          dotnet restore PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj -p:RestoreLockedMode=true
+          dotnet restore PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj
+
+      # The resolved versions, as data instead of as a committed file. Restore writes
+      # `packages.lock.json` beside every project (RestorePackagesWithLockFile=true in
+      # Directory.Build.props) and .gitignore keeps it out of the tree; uploading it here
+      # is what makes "which exact versions did this build use" answerable after the
+      # runner is gone -- the one job the tracked lock used to do.
+      # `if: always()` on purpose: a leg that fails after restore still produced a
+      # resolution, and that is exactly the run somebody needs to inspect.
+      - name: Upload resolved versions (restore record)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolved-versions-picoschedule-${{ matrix.rid }}
+          path: |
+            **/packages.lock.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build
         run: dotnet build PicoSchedule/tests/PicoSchedule.Tests/PicoSchedule.Tests.csproj --configuration Release --no-restore

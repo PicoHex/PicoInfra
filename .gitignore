@@ -52,6 +52,16 @@ results/
 # .NET Core
 project.lock.json
 project.fragment.lock.json
+
+# NuGet lock files are a RECORD, not a pin. Versions float on purpose (the policy lives in
+# Directory.Packages.props), so packages.lock.json holds "which exact version did this
+# restore resolve" -- useful locally, wrong as a source of truth. It is a local artifact and
+# is never tracked: `dotnet publish` writes RID-specific entries (Microsoft.DotNet.ILCompiler)
+# into it, so a committed lock dirtied the tree on every release. RestorePackagesWithLockFile
+# stays true (restore still writes the record, at every level); .github/workflows/ci.yml
+# uploads those files as the `resolved-versions` artifact, so "which versions did that build
+# use" is answerable without a file in git.
+packages.lock.json
 **/Properties/launchSettings.json
 
 # NuGet

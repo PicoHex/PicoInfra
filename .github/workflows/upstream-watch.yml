@@ -1,14 +1,14 @@
 # Upstream watch - REPORT ONLY. This is R10 of the dependency policy.
 #
 # Directory.Packages.props floats the LAST segment of every version (first-party
-# `<year>.<x>.*`, official / third-party `<x>.<y>.*`), and deps-refresh.yml is what
-# lets that float actually move. But deps-refresh runs
-# `dotnet restore --force-evaluate`, which re-resolves the graph INSIDE each
-# declared range and never outside it: `2026.13.*` can never resolve `2026.14.0`,
-# `5.9.*` can never resolve `5.10.0`. The band itself only moves when a person
-# moves it (the policy is "adapt our code to upstream", never "hold upstream
-# back"), so the refresh PR is structurally silent about exactly the move a human
-# must make.
+# `<year>.<x>.*`, official / third-party `<x>.<y>.*`), and nothing is locked to a set
+# of resolved versions: a plain `dotnet restore` takes the newest version inside each
+# declared range, every time. What a restore can never do is step OUTSIDE the range:
+# `2026.13.*` can never resolve `2026.14.0`, `5.9.*` can never resolve `5.10.0`. The
+# band itself only moves when a person moves it (the policy is "adapt our code to
+# upstream", never "hold upstream back"), and because restore is silent about exactly
+# that move, it is the one dependency event this repository reports here and nowhere
+# else.
 #
 # That silence is the hole this workflow fills. It is not a red build anywhere:
 # nothing else in the pipeline would ever say "upstream left the band", so without
@@ -16,12 +16,14 @@
 #
 # What it does: for every `<PackageVersion>` in Directory.Packages.props it asks
 # nuget.org for the latest STABLE version and compares the declared band - the
-# segments before the `*`. Same band is fine (the patch belongs to deps-refresh);
+# segments before the `*`. Same band is fine (a patch needs no job at all: the next
+# restore floats to it);
 # a different, higher band is a migration, and it becomes a job-summary table plus
 # an issue.
 #
 # What it must never do (R10): edit Directory.Packages.props, edit a
-# packages.lock.json, open a version-bump PR, auto-merge anything - and it must not
+# packages.lock.json (a local, untracked record of what a restore resolved), open a
+# version-bump PR, auto-merge anything - and it must not
 # fail the job because a migration is due. Whether and when to migrate is a human
 # decision: a red run would only teach everyone to ignore it.
 # `contents: read` is the permission that enforces the first half: the token this
@@ -174,9 +176,9 @@ jobs:
             printf '## Upstream watch: the floated bands\n\n'
             printf 'Declarations read from `%s`; latest stable asked of the nuget.org flat container index.\n\n' "$props"
             if [ "$migrations" -gt 0 ]; then
-              printf '**%s package(s) left the band the policy forbids floating.** deps-refresh cannot see this by construction - it re-resolves inside the declared range only - so this is the migration a person owes.\n\n' "$migrations"
+              printf '**%s package(s) left the band the policy forbids floating.** a restore cannot see this by construction - it re-resolves inside the declared range only - so this is the migration a person owes.\n\n' "$migrations"
             else
-              printf 'Every declared band still contains the latest stable release of the package it names: the only moves available were patches, and patches belong to deps-refresh.\n\n'
+              printf 'Every declared band still contains the latest stable release of the package it names: the only moves available were patches, and a patch arrives with the next restore on its own.\n\n'
             fi
             printf '| package | declared | latest stable | status |\n'
             printf '|---|---|---|---|\n'
@@ -214,9 +216,9 @@ jobs:
 
           body="$work/body.md"
           {
-            printf 'A floated band in `Directory.Packages.props` no longer contains what the feed publishes. `deps-refresh` re-resolves **inside** the declared band, so this move is invisible to it by construction - it is the one dependency event this repository reserves for a person.\n\n'
+            printf 'A floated band in `Directory.Packages.props` no longer contains what the feed publishes. A restore re-resolves **inside** the declared band, so this move is invisible to it by construction - it is the one dependency event this repository reserves for a person.\n\n'
             cat "$table"
-            printf '\n**This is a band move, not a patch: change the segment of the matching entry in `Directory.Packages.props` to the new band, then `dotnet restore --force-evaluate` to regenerate the locks; if the build or the tests then break, adapt our code to upstream - do not roll the version back.**\n'
+            printf '\n**This is a band move, not a patch: change the segment of the matching entry in `Directory.Packages.props` to the new band, then `dotnet restore` (there is no committed lock to update - the files it writes are local records); if the build or the tests then break, adapt our code to upstream - do not roll the version back.**\n'
             printf '\nReported by `.github/workflows/upstream-watch.yml`, which never edits a props file, a lock file or a version.\n'
           } > "$body"
 
