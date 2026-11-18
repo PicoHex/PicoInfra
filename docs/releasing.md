@@ -30,13 +30,13 @@ and do not infer it from a date.
 
 | Piece | What it is |
 |---|---|
-| `.github/workflows/release.yml` | The packer that publishes. Triggered by a `v*` tag (or `workflow_dispatch`, whose `backfill_tag` input runs the symbol backfill job instead of the release chain — see *Symbols* below). It runs every test project, then packs in three phases (abstractions with `UseProjectReferences=true`, consumers against the staged feed, then the rest), strips the leading `v` from the tag to get `-p:Version`, uploads the `.nupkg`/`.snupkg` set, and on the `publish` job logs into nuget.org by OIDC, pushes the `.nupkg` set with `--skip-duplicate`, then the `.snupkg` set the same way, and creates the GitHub release whose body is `docs/release-notes/<tag>.md` followed by the auto-generated compare link (the step fails when that file is missing, so a release page can never ship without notes). |
+| `.github/workflows/release.yml` | The packer that publishes. Triggered by a `v*` tag (or `workflow_dispatch`, whose `backfill_run_id` input runs the symbol backfill job instead of the release chain — see *Symbols* below). It runs every test project, then packs in three phases (abstractions with `UseProjectReferences=true`, consumers against the staged feed, then the rest), strips the leading `v` from the tag to get `-p:Version`, uploads the `.nupkg`/`.snupkg` set, and on the `publish` job logs into nuget.org by OIDC, pushes the `.nupkg` set with `--skip-duplicate`, then the `.snupkg` set the same way, and creates the GitHub release whose body is `docs/release-notes/<tag>.md` followed by the auto-generated compare link (the step fails when that file is missing, so a release page can never ship without notes). |
 | `scripts/release.ps1` | The local packer: `-Version <x.y.z>` (mandatory), optional `-SkipTests`, `-NoPush`. Packs the same three phases into `artifacts/nupkg`, then creates an annotated tag and pushes branch + tag. It refuses a non-numeric version, a tag that already exists, and a dirty tree. It **is not** the skill's `release.ps1`: it has no `-DryRun` and no `-Bootstrap`, and it does not decide a version. |
 | `scripts/check-release-parity.sh` | Drift guard: the project sets packed by `release.ps1` and by `release.yml` must be identical, and so must the test-project sets. Runs `dotnet pack`/`dotnet test` target extraction, exits non-zero on any difference. Run it after touching either side — drift here is silent, and once left PicoSchedule out of the local feed. |
 | `artifacts/nupkg` | The local folder feed. Restored automatically when the folder exists (`Directory.Build.props` adds it to `RestoreAdditionalProjectSources`). It exists because nuget.org needs minutes to index a new version while sibling repos (PicoActor, PicoNode, PicoAgent, …) restore by `PackageReference`. Same bits as CI, served sooner. |
 | `tools/release-build.sh` | Local verification build: refuses a branch that is not `main` (`exit 2`) and a dirty tree (`exit 3`), prints the exact `HEAD` it built from, and writes artifacts **outside** the repository (`OUT`, default `$TMPDIR/rel-<short sha>`). Its job is proof of provenance, not publication. |
 
-## Symbols — `pack` emits a `.snupkg` per package, and a release that shipped without one is repaired by hand
+## Symbols — `pack` emits a `.snupkg` per package, and a published version can never gain them
 
 `IncludeSymbols` / `SymbolPackageFormat=snupkg` are declared in `Directory.Build.targets:14-18`, not
 in `Directory.Build.props`, and which of the two files they live in *is* the point: the block's
@@ -56,35 +56,77 @@ packable project and empty / `symbols.nupkg` (the NuGet default) for `PicoLog.Te
 `dotnet pack` with no symbol property on the command line now leaves a `.snupkg` beside each
 `.nupkg`.
 
-A release that shipped without symbols is repaired by the **`backfill-symbols` job inside
-`release.yml`**, reached through `workflow_dispatch`. It cannot be its own workflow file: nuget.org's
-trusted-publishing policy for this repository names `release.yml`, and `NuGet/login` enforces the
-name — a standalone `backfill-symbols.yml` packed all 40 files correctly in run 44332758225 and then
-died with `Token exchange failed (HTTP 401) … Workflow mismatch for policy 'PicoInfra': expected
-'release.yml', actual 'backfill-symbols.yml'`. The policy names one file, so the repair job now lives
-in that file and its header explains why: do not move it back out.
+### Symbols cannot be retro-added to a published version
 
-The job is gated on the `backfill_tag` dispatch input. Empty is the pre-existing behaviour — `pack`
-→ `publish`, version parsed from the ref; set, and `pack` stands down and `publish` with it through
-`needs`, so the run is the backfill alone. A NuGet version is immutable, so the only repair is
-pushing `.snupkg` files at the version already on the feed: the job checks out the tag, proves `HEAD`
-*is* that tag (a missing tag already fails the checkout; a branch of the same name must not pass),
-re-packs the same 20 projects in `release.yml`'s three phases with the two symbol properties forced
-on the command line — the tag it builds may predate this fix, so it cannot rely on the tree — then
-pushes **only** the `.snupkg` files, and fails on a `.nupkg`, a foreign version or an empty set. The
-push step declares `working-directory: artifacts/nupkg`, the directory the pack wrote: globbing the
-workspace root instead is what made the old job stand ready to announce "the pack produced no
-symbols" about a directory it had never listed.
+A `.nupkg` embeds the identity of the PDB it was built with: the CodeView record of the shipped DLL
+pins that PDB's id, and **PDB ID = CodeView GUID is the only authoritative, checkable link** — a
+`.snupkg` carries no hash of its `.nupkg`, and the DLL's `PDB_CHECKSUM` is not the PDB file's
+SHA-256 (the control below settles both). A rebuild from the same tag never reaches that id: the two
+assemblies carry byte-identical IL and differ in **71 bytes over 5 ranges** — PE `TimeDateStamp`,
+module MVID, CodeView timestamp, CodeView GUID, `PDB_CHECKSUM`. That is build identity, stamped per
+toolchain instance. Two consecutive packs of one tag are byte-identical *to each other* (reproducible
+pack; `CI=true`, SourceLink at `107f54c` for the probe below) and still are not the published bits.
+
+Measured on `v2026.11.0` — published 2026-11-06 with 20 `.nupkg` and **0 `.snupkg`** — by dispatching
+the old re-packing backfill (`release.yml`, run `44340046281`):
+
+| version | PDB id the published DLL wants | PDB id a rebuild of the tag yields |
+|---|---|---|
+| `2026.11.0` | `ef12ed63f9051a4ab52fafd95e519ba6` | `430acd12439bf04a9b064fafdc7f8714` — **no match** |
+| `2026.11.1` (control) | `1177b170…` | matches |
+| `2026.11.2` (control, symbols shipped with the release) | `554250cb0d5ad84fa57468530b2dad17` | snupkg `#Pdb` `554250cb0d5ad84fa57468530b2dad17c09a84ad` — matches |
+
+The push does not fail, which is the trap. All 20 symbol pushes returned **`201 Created`** and the
+job reported `20 symbol packages pushed, 0 skipped`. Nothing ever became retrievable: **21 polling
+rounds over 94 minutes, `0/20` at HTTP 200**, body `<Code>BlobNotFound</Code>`, while the `2026.11.2`
+control was **`20/20` at HTTP 200** in the same rounds. nuget.org accepts a symbol package for a
+version it already has and then cannot serve it, because no published binary is bound to it. A green
+backfill therefore proves nothing, which is why the job now refuses instead of packing.
+
+### What to do instead, in this order
+
+1. **The failed release's own pack artifacts still exist** (the `nupkg` artifact of *that* run) → push
+   **those** `.snupkg` files. They were built in the same run that published the `.nupkg`s, so their
+   PDBs *are* the published bits'. Never a rebuild. This is the one case the job handles.
+2. **Otherwise the only public remedy is a new version.** That is `v2026.11.0`'s situation: its
+   release run emitted no `.snupkg` at all, so no artifact of it can carry a matching PDB, and no
+   amount of work on that version can produce one.
+3. **A private symbol server** can hold the rebuilt `.snupkg` files for internal debugging, labelled
+   as *not* matching the published binaries. Optional, and never a substitute for 1 or 2.
+
+### The `backfill-symbols` job replays a release run's artifact — it does not pack
+
+It lives **inside `release.yml`** and cannot be its own workflow file: nuget.org's trusted-publishing
+policy for this repository names `release.yml`, and `NuGet/login` enforces the name — a standalone
+`backfill-symbols.yml` packed all 40 files correctly in run 44332758225 and then died with
+`Token exchange failed (HTTP 401) … Workflow mismatch for policy 'PicoInfra': expected
+'release.yml', actual 'backfill-symbols.yml'`. The policy names one file: do not move it back out.
+
+The job is gated on the `backfill_run_id` dispatch input, which names **the run whose artifact must
+be replayed** — not a tag, because a tag is exactly what cannot be rebuilt. Empty is the pre-existing
+behaviour: `pack` → `publish`, version parsed from the ref. Set, and `pack` stands down and `publish`
+with it through `needs`, so the run is the backfill alone. It downloads that run's `nupkg` artifact
+(the one `pack` uploads: 20 `.nupkg` + 20 `.snupkg`), keeps only the `.snupkg` files, and pushes them
+with `--skip-duplicate`. It refuses loudly, naming the new-version remedy, when the run has no
+`nupkg` artifact at all or when that artifact holds no `.snupkg` — the `v2026.11.0` shape — and it
+refuses a `.nupkg` that would reach the push loop and a symbol whose version does not match. The push
+step's `working-directory` is the directory the download lands in; globbing the workspace root
+instead is what once made this job stand ready to announce "the pack produced no symbols" about a
+directory it had never listed.
 
 ```shell
-gh workflow run release.yml --ref main -f backfill_tag=v2026.11.0
+gh workflow run release.yml --ref main -f backfill_run_id=<run id> -f tag=v2026.11.2
 ```
+
+`tag` is optional and only labels the log and the job summary; the version that is pushed comes from
+the symbol file names and is cross-checked against it. Find the id with `gh run list --workflow
+release.yml`.
 
 **Nothing gates it.** `release.yml` only *reports* the symbol count — `Publishing N package(s) and M
 symbol package(s)` (`:324`) and the same line after the pushes (`:363`) — so a release can ship 20
-packages and 0 `.snupkg` and stay green. The fix is in the pack, not in a gate. The backfill itself
-has not been run for `v2026.11.0`: nothing in this repository can verify a push to nuget.org, so a
-consumer of that version gets source-stepping only once someone dispatches it.
+packages and 0 `.snupkg` and stay green. The fix is in the pack, not in a gate. And once the release
+run is gone, the symbols are gone with it: `v2026.11.0` has no matching `.snupkg` anywhere, so a
+consumer of that version gets source-stepping from a new version or not at all.
 
 ## Analyzer release tracking — the `Shipped` half is per release, the `Unshipped` half is per commit
 
