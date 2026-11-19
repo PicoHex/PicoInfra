@@ -17,12 +17,14 @@ namespace PicoCfg.Yaml;
 /// of those was silent — the document parsed, values just were not there.
 /// </para>
 /// <para>
-/// <b>What the reader gives us</b> (measured against PicoYaml 2026.12.0): mappings arrive as
+/// <b>What the reader gives us</b> (measured against PicoYaml 2026.17.0): mappings arrive as
 /// <c>PropertyName</c> tokens carrying the key in <see cref="YamlReader.KeySpan"/> and a fused
-/// scalar in <see cref="YamlReader.ValueSpan"/> (empty when a container follows); sequences
-/// arrive as an <c>ObjectStart</c> whose children are BARE value tokens with no key. So "bare
-/// value token" means "sequence item" — that is the only signal, because KeySpan keeps the
-/// previous key on item tokens.
+/// scalar in <see cref="YamlReader.ValueSpan"/> (empty when a container follows); a sequence
+/// opens with <c>ArrayStart</c> and its children are BARE value tokens with no key (before
+/// PicoSerDe 2026.12.1 a sequence opened with <c>ObjectStart</c>, which is why both token kinds
+/// are handled below — the frame logic is the same for either container). So "bare value token"
+/// means "sequence item" — that is the only signal, because KeySpan keeps the previous key on
+/// item tokens.
 /// </para>
 /// <para>
 /// <b>Keys, and the one ambiguity YAML has</b>: a key is the ':'-joined path, so a ':' inside a
@@ -126,8 +128,12 @@ internal static class YamlFlattener
 
                 case TokenType.ObjectEnd:
                 case TokenType.ArrayEnd:
-                    // The reader emits one trailing ObjectEnd past the last close (measured), so
-                    // the pop has to be guarded rather than trusted.
+                    // Defensive only. PicoSerDe 2026.12.1 made push == open and pop == close, so a
+                    // well-formed document closes exactly what it opened and the bound below never
+                    // fires. It used to be load-bearing: the reader emitted one trailing ObjectEnd
+                    // past the last close, and popping on it drove the frame stack negative. Keep
+                    // the bound, not the compensation - an unbalanced document should leave the
+                    // stack alone rather than pop a frame it never pushed.
                     if (frames.Count > 1)
                         frames.RemoveAt(frames.Count - 1);
                     pendingKey = null;

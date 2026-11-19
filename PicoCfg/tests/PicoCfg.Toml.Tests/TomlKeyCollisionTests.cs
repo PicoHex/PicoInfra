@@ -51,15 +51,22 @@ public class TomlKeyCollisionTests
         await Assert.That(root.GetValue("db:ssl:on")).IsEqualTo("true");
     }
 
-    /// <summary>Duplicate keys inside ONE table are not a collision — last wins, as before.</summary>
+    /// <summary>
+    /// A key defined twice in one table is not a collision we resolve - it is a document TOML 1.0
+    /// forbids, so the reader refuses it before the flattening ever sees two values. This test used to
+    /// assert "last wins", which was this repo codifying the reader's leniency as a contract; the
+    /// clause is TOML 1.0 section Keys (defining a key multiple times is invalid), and tomllib refuses
+    /// the same document.
+    /// </summary>
     [Test]
-    public async Task DuplicateKeyInTheSameTable_LastWins()
+    public async Task DuplicateKeyInTheSameTable_IsRefusedByTheReader()
     {
         var builder = Cfg.CreateBuilder();
         builder.AddToml("[t]\nk = 1\nk = 2");
 
-        var root = await builder.BuildAsync();
-
-        await Assert.That(root.GetValue("t:k")).IsEqualTo("2");
+        await Assert
+            .That(async () => await builder.BuildAsync())
+            .Throws<FormatException>()
+            .Because("TOML 1.0 section Keys forbids defining a key twice in the same table");
     }
 }

@@ -119,4 +119,26 @@ public class YamlNestedStructureTests
         await Assert.That(root.GetValue("Flag")).IsEqualTo("true");
         await Assert.That(root.GetValue("None")).IsNull();
     }
+
+    /// <summary>
+    /// PicoSerDe 2026.12.1 made the YAML reader push exactly what it opens and pop exactly what it
+    /// closes; before that it emitted one trailing <c>ObjectEnd</c> past the last close, and this
+    /// backend carried a compensation branch for it. The branch is gone (the guard that remains is
+    /// only a bound), so this pins the property the compensation used to hide: a nested document
+    /// closes every container it opens, and a key written after the nested block still flattens.
+    /// </summary>
+    [Test]
+    public async Task NestedDocument_ClosesEveryContainerItOpens_AndTheFollowingKeySurvives()
+    {
+        var builder = Cfg.CreateBuilder();
+        builder.AddYaml("A:\n  B:\n    C: deep\nAfter: kept");
+
+        var root = await builder.BuildAsync();
+
+        await Assert.That(root.GetValue("A:B:C")).IsEqualTo("deep");
+        await Assert
+            .That(root.GetValue("After"))
+            .IsEqualTo("kept")
+            .Because("a container that closed one token too many would swallow the key after it");
+    }
 }
