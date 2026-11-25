@@ -57,7 +57,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # bash + curl, no .NET SDK: the question is "what does the feed publish at
       # all", and a restore would answer a different one (what resolves inside the
