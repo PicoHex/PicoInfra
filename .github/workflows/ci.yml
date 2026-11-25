@@ -299,7 +299,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picodi-${{ matrix.rid }}
           path: |
@@ -439,7 +439,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picocfg-${{ matrix.rid }}
           path: |
@@ -630,7 +630,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picolog-${{ matrix.rid }}
           path: |
@@ -800,7 +800,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picoaop-${{ matrix.rid }}
           path: |
@@ -936,7 +936,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picomediator-${{ matrix.rid }}
           path: |
@@ -1069,7 +1069,7 @@ jobs:
       # resolution, and that is exactly the run somebody needs to inspect.
       - name: Upload resolved versions (restore record)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: resolved-versions-picoschedule-${{ matrix.rid }}
           path: |
